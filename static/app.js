@@ -1290,6 +1290,52 @@ function saveEntryChanges(modal, entryIdx) {
     }
 }
 
+function deleteFolderWithConfirmation(folderIdx, modal) {
+    const currentFolder = getCurrentFolder();
+    const targetFolder = currentFolder.folders[folderIdx];
+    
+    if (!targetFolder) {
+        showErrorMessage('Folder not found', 2);
+        return;
+    }
+    
+    showDeleteConfirmationModal([{
+        type: 'folder',
+        index: folderIdx,
+        name: targetFolder.name,
+        item: targetFolder
+    }], () => {
+        currentFolder.folders.splice(folderIdx, 1);
+        autoSave();
+        render();
+        modal.remove();
+        showErrorMessage(`Folder "${targetFolder.name}" deleted successfully`, 1);
+    });
+}
+
+function deleteEntryWithConfirmation(entryIdx, modal) {
+    const currentFolder = getCurrentFolder();
+    const targetEntry = currentFolder.entries[entryIdx];
+    
+    if (!targetEntry) {
+        showErrorMessage('Entry not found', 2);
+        return;
+    }
+    
+    showDeleteConfirmationModal([{
+        type: 'entry',
+        index: entryIdx,
+        name: targetEntry.name,
+        item: targetEntry
+    }], () => {
+        currentFolder.entries.splice(entryIdx, 1);
+        autoSave();
+        render();
+        modal.remove();
+        showErrorMessage(`Entry "${targetEntry.name}" deleted successfully`, 1);
+    });
+}
+
 function setCoverImage(targetType, targetIndex, imageSource) {
     const folder = getCurrentFolder();
     
@@ -1519,7 +1565,7 @@ function createBatchActionsBar() {
             showErrorMessage('No items selected to delete', 1);
             return;
         }
-        showErrorMessage('[PLACEHOLDER] Batch delete functionality will be implemented later', 1);
+        deleteSelectedItemsWithConfirmation();
     };
     
     return bar;
@@ -1772,6 +1818,67 @@ function collectAllLinksFromFolder(folder, linkArray) {
             collectAllLinksFromFolder(subfolder, linkArray);
         });
     }
+}
+
+function deleteSelectedItemsWithConfirmation() {
+    const selectedCount = selectedItems.size;
+    if (selectedCount === 0) {
+        showErrorMessage('No items selected for deletion', 1);
+        return;
+    }
+    
+    const currentFolder = getCurrentFolder();
+    const itemsToDelete = [];
+    
+    // Collect items
+    selectedItems.forEach(itemId => {
+        const [type, index] = itemId.split(':');
+        const idx = parseInt(index);
+        
+        if (type === 'folder' && currentFolder.folders[idx]) {
+            const folder = currentFolder.folders[idx];
+            itemsToDelete.push({
+                type: 'folder',
+                index: idx,
+                name: folder.name,
+                item: folder
+            });
+        } else if (type === 'entry' && currentFolder.entries[idx]) {
+            const entry = currentFolder.entries[idx];
+            itemsToDelete.push({
+                type: 'entry',
+                index: idx,
+                name: entry.name,
+                item: entry
+            });
+        }
+    });
+    
+    if (itemsToDelete.length === 0) {
+        showErrorMessage('No valid items found for deletion', 2);
+        return;
+    }
+    
+    showDeleteConfirmationModal(itemsToDelete, () => {
+        // Sort by index descending to avoid index shifting issues
+        itemsToDelete.sort((a, b) => b.index - a.index);
+        
+        // Delete items
+        itemsToDelete.forEach(({type, index}) => {
+            if (type === 'folder') {
+                currentFolder.folders.splice(index, 1);
+            } else if (type === 'entry') {
+                currentFolder.entries.splice(index, 1);
+            }
+        });
+        
+        const deletedCount = itemsToDelete.length;
+        showErrorMessage(`Successfully deleted ${deletedCount} item${deletedCount !== 1 ? 's' : ''}`, 1);
+        
+        clearSelection();
+        autoSave();
+        render();
+    });
 }
 
 function setupMainAreaDragDrop(contentDiv) {
@@ -2183,7 +2290,7 @@ function showFolderEditModal(folder, folderIdx) {
     };
 
     modal.querySelector('#delete-folder-btn').onclick = () => {
-        showErrorMessage('[PLACEHOLDER] Delete folder functionality will be implemented later', 1);
+        deleteFolderWithConfirmation(folderIdx, modal);
     };
     
     setupModalEscapeKey(modal);
@@ -2388,7 +2495,7 @@ function showEntryEditModal(entryData, entryIdx) {
     };
     
     modal.querySelector('#delete-entry-btn').onclick = () => {
-        showErrorMessage('[PLACEHOLDER] Delete entry functionality will be implemented later', 1);
+        deleteEntryWithConfirmation(entryIdx, modal);
     };
     
     setupModalEscapeKey(modal);
@@ -2488,6 +2595,120 @@ function showMoveModal() {
         if (performMoveOperation(selectedDestination)) {
             modal.remove();
         }
+    };
+    
+    setupModalEscapeKey(modal);
+}
+
+function showDeleteConfirmationModal(itemsToDelete, onConfirm) {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    
+    // Create header text
+    let headerText = 'Delete ';
+    if (itemsToDelete.length === 1) {
+        headerText += itemsToDelete[0].type === 'folder' ? 'Folder?' : 'Entry?';
+    } else {
+        headerText += 'Selected Items?';
+    }
+    
+    // Create content description
+    let contentDescription = 'This will delete:\n';
+    
+    if (itemsToDelete.length === 1) {
+        const item = itemsToDelete[0];
+        if (item.type === 'folder') {
+            const totalEntries = getTotalEntries(item.item);
+            const subfolderCount = item.item.folders ? item.item.folders.length : 0;
+            
+            if (totalEntries === 0 && subfolderCount === 0) {
+                contentDescription += 'Empty folder';
+            } else {
+                const parts = [];
+                if (subfolderCount > 0) {
+                    parts.push(`${subfolderCount} Subfolder${subfolderCount !== 1 ? 's' : ''}`);
+                }
+                if (totalEntries > 0) {
+                    parts.push(`${totalEntries} Entr${totalEntries !== 1 ? 'ies' : 'y'}`);
+                }
+                contentDescription += parts.join(' and ');
+            }
+        } else {
+            const linksCount = getLinksCount(item.item);
+            const hasNote = item.item.note && item.item.note.trim();
+            
+            if (linksCount === 0 && !hasNote) {
+                contentDescription += 'Empty entry';
+            } else {
+                const parts = [];
+                if (linksCount > 0) {
+                    parts.push(`${linksCount} Link${linksCount !== 1 ? 's' : ''}`);
+                }
+                if (hasNote) {
+                    parts.push('1 Note');
+                }
+                contentDescription += parts.join(' and ');
+            }
+        }
+    } else {
+        // Multiple items
+        const folderCount = itemsToDelete.filter(item => item.type === 'folder').length;
+        const entryCount = itemsToDelete.filter(item => item.type === 'entry').length;
+        
+        const parts = [];
+        if (folderCount > 0) {
+            parts.push(`${folderCount} Folder${folderCount !== 1 ? 's' : ''}`);
+        }
+        if (entryCount > 0) {
+            parts.push(`${entryCount} Entr${entryCount !== 1 ? 'ies' : 'y'}`);
+        }
+        contentDescription += parts.join(' and ');
+    }
+    
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>${headerText}</h3>
+                <button class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <div style="margin-bottom: 20px; white-space: pre-line;">${contentDescription}</div>
+                </div>
+                <div class="modal-actions">
+                    <button id="delete-confirm-btn" type="button" class="btn-danger">Delete</button>
+                    <button id="delete-cancel-btn" type="button" class="btn-secondary">Cancel</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Event listeners
+    modal.querySelector('.close-btn').onclick = () => modal.remove();
+    modal.querySelector('#delete-cancel-btn').onclick = () => modal.remove();
+    
+    let mouseDownOnModal = false;
+    modal.addEventListener('mousedown', (e) => {
+        if (e.target === modal) {
+            mouseDownOnModal = true;
+        } else {
+            mouseDownOnModal = false;
+        }
+    });
+
+    modal.addEventListener('mouseup', (e) => {
+        if (e.target === modal && mouseDownOnModal) {
+            modal.remove();
+        }
+        mouseDownOnModal = false;
+    });
+    
+    // Delete confirmation
+    modal.querySelector('#delete-confirm-btn').onclick = () => {
+        modal.remove();
+        onConfirm();
     };
     
     setupModalEscapeKey(modal);
