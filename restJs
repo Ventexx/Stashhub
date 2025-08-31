@@ -1,0 +1,35 @@
+async function saveDataToServer() {
+    try {
+        // Add profile information to data if not present
+        if (!data.settings) {
+            data.settings = {};
+        }
+        
+        // Determine profile ID from current session path
+        const currentProfile = globalSettings.profiles.find(p => p.path === globalSettings.currentSession);
+        if (currentProfile) {
+            data.settings.profileId = currentProfile.id;
+            data.settings.isProfile = true;
+        }
+        
+        const response = await fetch('/save-session', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                sessionPath: globalSettings.currentSession,
+                data: data
+            })
+        });
+        
+        if (response.ok) {
+            showErrorMessage('Data saved successfully!', 1);
+        } else {
+            showErrorMessage('Failed to save data to server', 2);
+        }
+    } catch (error) {
+        showErrorMessage('Error saving data to server', 2);
+        console.error('Save error:', error);
+    }
+}

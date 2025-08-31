@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local Bookmark Organizer</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div id="app">
+    <header>
+        <div class="header-left">
+            <h1>Local Bookmark Organizer</h1>
+            <div class="vertical-separator"></div>
+            <div class="header-main-buttons">
+                <button id="new-folder-btn">+ Folder</button>
+                <button id="new-entry-btn">+ Entry</button>
+                <button id="selection-toggle-btn" class="selection-toggle-btn">✓ Select</button>
+                <button id="export-btn">Export JSON</button>
+                <input type="file" id="import-file" style="display:none;" accept=".json">
+                <button id="import-btn">Import JSON</button>
+            </div>
+        </div>
+        <div class="header-right">
+            <select id="sort-dropdown">
+                <option value="name-asc">📝 Name A-Z</option>
+                <option value="name-desc">📝 Name Z-A</option>
+                <option value="count-asc">🔢 Count Low-High</option>
+                <option value="count-desc">🔢 Count High-Low</option>
+            </select>
+            <button id="help-btn">?</button>
+            <button id="settings-btn">⚙️</button>
+        </div>
+    </header>
+    <main id="main-view"></main>
+</div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
