@@ -1632,16 +1632,18 @@ function createBatchActionsBar() {
     bar.id = 'batch-actions-bar';
     
     bar.innerHTML = `
-        <div class="batch-counter" id="batch-counter">0 items selected</div>
         <div class="batch-actions">
-            <button id="batch-select-all-btn" class="batch-select-all-btn">Select All</button>
-            <button id="batch-clear-btn" class="batch-clear-btn">Clear</button>
-            <button id="batch-move-btn" class="batch-move-btn">📁 Move</button>
-            <button id="batch-open-btn" class="batch-open-btn">🚀 Open All</button>
-            <button id="batch-export-btn" class="batch-export-btn">📤 Export as JSON</button>
-            <button id="batch-duplicate-btn" class="batch-duplicate-btn">📄 Duplicate</button>
-            <button id="batch-delete-btn" class="batch-delete-btn">🗑️ Delete</button>
+            <button id="batch-delete-btn" class="batch-delete-btn" data-tooltip="Delete">🗑️</button>
+            <button id="batch-export-btn" class="batch-export-btn" data-tooltip="Export as JSON">📤</button>
+            <button id="batch-duplicate-btn" class="batch-duplicate-btn" data-tooltip="Duplicate">📄</button>
+            <button id="batch-open-btn" class="batch-open-btn" data-tooltip="Open">🚀</button>
+            <button id="batch-move-btn" class="batch-move-btn" data-tooltip="Move">📁</button>
         </div>
+        <div class="batch-actions">
+            <button id="batch-clear-btn" class="batch-clear-btn" data-tooltip="Clear Selection">✗</button>
+            <button id="batch-select-all-btn" class="batch-select-all-btn" data-tooltip="Select All">✓</button>
+        </div>
+        <div class="batch-counter" id="batch-counter">0 items selected</div>
     `;
     
     bar.querySelector('#batch-select-all-btn').onclick = selectAllItems;

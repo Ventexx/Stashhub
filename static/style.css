@@ -466,32 +466,70 @@ header button:hover { background: #666; }
 
 /* Batch Actions */
 .batch-actions-bar {
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
     background: #fff;
     padding: 15px 20px;
-    margin: 20px 0;
     border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     border-left: 4px solid #007bff;
     display: none;
     align-items: center;
     gap: 15px;
     flex-wrap: wrap;
+    z-index: 2000;
+    width: auto;
+    min-width: 300px;
+    max-width: calc(100vw - 40px);
+    transition: transform 0.3s ease-in-out;
+    pointer-events: none;
 }
-.batch-actions-bar.show { display: flex; }
-.batch-counter { font-weight: 600; color: #333; font-size: 14px; }
-.batch-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.batch-actions button { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s ease; }
+.batch-actions-bar.show { display: flex; transform: translateX(0); pointer-events: auto; }
+.batch-counter { font-weight: 600; color: #333; font-size: 14px; margin-left: auto; order: 2; }
+.batch-actions { display: flex; gap: 8px; flex-wrap: wrap; order: 1; }
+.batch-actions button { 
+    padding: 8px 12px; 
+    border: none; 
+    border-radius: 4px; 
+    cursor: pointer; 
+    font-size: 16px; 
+    font-weight: 500; 
+    transition: all 0.2s ease;
+    position: relative;
+    min-width: 36px;
+}
 
-.batch-select-all-btn, .batch-clear-btn { background: #6c757d; color: white; }
-.batch-select-all-btn:hover, .batch-clear-btn:hover { background: #5a6268; }
-.batch-delete-btn { background: #dc3545; color: white; }
+.batch-actions button:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    z-index: 10;
+    margin-bottom: 5px;
+}
+
+.batch-delete-btn { background: #dc3545; color: white; order: 1; }
 .batch-delete-btn:hover { background: #c82333; }
-.batch-move-btn, .move-confirm-btn { background: #28a745; color: white; }
+.batch-move-btn, .move-confirm-btn { background: #28a745; color: white; order: 2; }
 .batch-move-btn:hover, .move-confirm-btn:hover { background: #218838; }
-.batch-open-btn { background: #17a2b8; color: white; }
-.batch-open-btn:hover { background: #138496; }
-.batch-export-btn { background-color: #9d4edd; border-color: #9d4edd; color: white; }
+.batch-duplicate-btn { background: #6f42c1; color: white; order: 3; }
+.batch-duplicate-btn:hover { background: #5a2d91; }
+.batch-export-btn { background-color: #9d4edd; border-color: #9d4edd; color: white; order: 4; }
 .batch-export-btn:hover { background-color: #8b5cf6; border-color: #8b5cf6; }
+.batch-open-btn { background: #17a2b8; color: white; order: 5; }
+.batch-open-btn:hover { background: #138496; }
+.batch-clear-btn { background: #6c757d; color: white; order: 6; }
+.batch-clear-btn:hover { background: #5a6268; }
+.batch-select-all-btn { background: #6c757d; color: white; order: 7; }
+.batch-select-all-btn:hover { background: #5a6268; }
 
 /* Modal System */
 .modal-overlay {
