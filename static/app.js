@@ -1,13 +1,20 @@
+const MAX_NOTIFICATIONS = 5;
+let currentPath = [];
+let currentSort = 'name-asc';
 let data = { name: "Root", cover: "", folders: [], entries: [] };
 let dataLoaded = false;
-let currentPath = [];
-let selectionMode = false;
-let selectedItems = new Set();
-let currentSort = 'name-asc';
-let notificationContainer = null;
-const MAX_NOTIFICATIONS = 5;
-let navigationHistory = [];
+let globalSettings = {
+    activeSession: "profile1",
+    profiles: [
+        { name: "profile1", value: "./data.json" }
+    ]
+};
 let historyIndex = -1;
+let navigationHistory = [];
+let notificationContainer = null;
+let saveTimeout = null;
+let selectedItems = new Set();
+let selectionMode = false;
 
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=-
 // CORE DATA & STATE MANAGEMENT
@@ -114,7 +121,6 @@ async function saveDataToServer() {
     }
 }
 
-let saveTimeout = null;
 function autoSave() {
     if (saveTimeout) {
         clearTimeout(saveTimeout);
@@ -174,13 +180,6 @@ async function switchToSession(profileName) {
 // =-=-=-=-=-=-=-=-=-=-=-=-
 // SETTINGS & CONFIGURATION
 // =-=-=-=-=-=-=-=-=-=-=-=-
-let globalSettings = {
-    activeSession: "profile1",
-    profiles: [
-        { name: "profile1", value: "./data.json" }
-    ]
-};
-
 function initializeSettings() {
     if (!data.settings) {
         data.settings = {
@@ -3365,6 +3364,177 @@ function showSettingsModal() {
     setupModalEscapeKey(modal);
 }
 
+function showCreateFolderModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create New Folder</h3>
+                <button class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Folder Name:</label>
+                    <input type="text" id="new-folder-name" placeholder="Enter folder name" autofocus>
+                </div>
+                <div class="modal-actions">
+                    <button id="create-folder-btn" type="button" class="btn-primary">Create</button>
+                    <button id="cancel-folder-btn" type="button" class="btn-secondary">Cancel</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Focus the input after modal is added
+    setTimeout(() => {
+        modal.querySelector('#new-folder-name').focus();
+    }, 100);
+    
+    // Event listeners
+    modal.querySelector('.close-btn').onclick = () => modal.remove();
+    modal.querySelector('#cancel-folder-btn').onclick = () => modal.remove();
+    
+    let mouseDownOnModal = false;
+    modal.addEventListener('mousedown', (e) => {
+        if (e.target === modal) {
+            mouseDownOnModal = true;
+        } else {
+            mouseDownOnModal = false;
+        }
+    });
+
+    modal.addEventListener('mouseup', (e) => {
+        if (e.target === modal && mouseDownOnModal) {
+            modal.remove();
+        }
+        mouseDownOnModal = false;
+    });
+    
+    // Create folder functionality
+    const createFolder = () => {
+        const name = modal.querySelector('#new-folder-name').value.trim();
+        if (!name) {
+            showErrorMessage('Folder name is required and cannot be empty', 2);
+            modal.querySelector('#new-folder-name').focus();
+            return;
+        }
+        
+        const folder = getCurrentFolder();
+        const newFolder = {
+            name: name,
+            cover: "",
+            folders: [],
+            entries: []
+        };
+        applyDefaultSettings(newFolder, 'folder');
+        folder.folders.push(newFolder);
+        autoSave();
+        render();
+        modal.remove();
+        showErrorMessage(`Folder "${name}" created successfully!`, 1);
+    };
+    
+    modal.querySelector('#create-folder-btn').onclick = createFolder;
+    
+    // Handle Enter key
+    modal.querySelector('#new-folder-name').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            createFolder();
+        }
+    });
+    
+    setupModalEscapeKey(modal);
+}
+
+function showCreateEntryModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create New Entry</h3>
+                <button class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Entry Name:</label>
+                    <input type="text" id="new-entry-name" placeholder="Enter entry name" autofocus>
+                </div>
+                <div class="modal-actions">
+                    <button id="create-entry-btn" type="button" class="btn-primary">Create</button>
+                    <button id="cancel-entry-btn" type="button" class="btn-secondary">Cancel</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Focus the input after modal is added
+    setTimeout(() => {
+        modal.querySelector('#new-entry-name').focus();
+    }, 100);
+    
+    // Event listeners
+    modal.querySelector('.close-btn').onclick = () => modal.remove();
+    modal.querySelector('#cancel-entry-btn').onclick = () => modal.remove();
+    
+    let mouseDownOnModal = false;
+    modal.addEventListener('mousedown', (e) => {
+        if (e.target === modal) {
+            mouseDownOnModal = true;
+        } else {
+            mouseDownOnModal = false;
+        }
+    });
+
+    modal.addEventListener('mouseup', (e) => {
+        if (e.target === modal && mouseDownOnModal) {
+            modal.remove();
+        }
+        mouseDownOnModal = false;
+    });
+    
+    // Create entry functionality
+    const createEntry = () => {
+        const name = modal.querySelector('#new-entry-name').value.trim();
+        if (!name) {
+            showErrorMessage('Entry name is required and cannot be empty', 2);
+            modal.querySelector('#new-entry-name').focus();
+            return;
+        }
+        
+        const folder = getCurrentFolder();
+        const newEntry = {
+            name: name,
+            cover: "",
+            links: []
+        };
+        applyDefaultSettings(newEntry, 'entry');
+        folder.entries.push(newEntry);
+        autoSave();
+        render();
+        modal.remove();
+        showErrorMessage(`Entry "${name}" created successfully!`, 1);
+    };
+    
+    modal.querySelector('#create-entry-btn').onclick = createEntry;
+    
+    // Handle Enter key
+    modal.querySelector('#new-entry-name').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            createEntry();
+        }
+    });
+    
+    setupModalEscapeKey(modal);
+}
+
 function showCreateJsonModal(profileName, onConfirm) {
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
@@ -3826,38 +3996,8 @@ document.addEventListener('DOMContentLoaded', async function() {
     await loadDataFromServer();
     initializeNavigationHistory();
     
-    document.getElementById('new-folder-btn').onclick = () => {
-        let name = prompt("Folder name:");
-        if (name && name.trim()) {
-            let folder = getCurrentFolder();
-            const newFolder = {
-                name: name.trim(),
-                cover: "",
-                folders: [],
-                entries: []
-            };
-            applyDefaultSettings(newFolder, 'folder');
-            folder.folders.push(newFolder);
-            autoSave();
-            render();
-        }
-    };
-
-    document.getElementById('new-entry-btn').onclick = () => {
-        let name = prompt("Entry name:");
-        if (name && name.trim()) {
-            let folder = getCurrentFolder();
-            const newEntry = {
-                name: name.trim(),
-                cover: "",
-                links: []
-            };
-            applyDefaultSettings(newEntry, 'entry');
-            folder.entries.push(newEntry);
-            autoSave();
-            render();
-        }
-    };
+    document.getElementById('new-folder-btn').onclick = showCreateFolderModal;
+    document.getElementById('new-entry-btn').onclick = showCreateEntryModal;
 
     document.getElementById('selection-toggle-btn').onclick = toggleSelectionMode;
     document.getElementById('help-btn').onclick = showHelpModal;
