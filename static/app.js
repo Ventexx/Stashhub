@@ -191,6 +191,7 @@ function initializeSettings() {
             defaultFolderWhiteText: false,
             linksExpandedByDefault: true,
             noteExpandedByDefault: true,
+            tagsExpandedByDefault: false,
             entryClickAction: 'openLinks' // 'openLinks' or 'copyNote'
         };
     }
@@ -209,12 +210,18 @@ function applyDefaultSettings(item, type) {
         if (item.whiteText === undefined) {
             item.whiteText = data.settings.defaultFolderWhiteText;
         }
+        if (!item.folderTags) {
+            item.folderTags = [];
+        }
     } else if (type === 'entry') {
         if (!item.aspectRatio) {
             item.aspectRatio = data.settings.defaultEntryAspectRatio;
         }
         if (!item.color) {
             item.color = data.settings.defaultEntryColor;
+        }
+        if (!item.entryTags) {
+            item.entryTags = [];
         }
     }
 }
@@ -343,8 +350,39 @@ function createNewProfile() {
 
 async function setActiveProfile(profileName) {
     const profile = globalSettings.profiles.find(p => p.name === profileName);
-    if (!profile || !profile.value) {
-        showErrorMessage('Cannot set active: No JSON assigned to this profile', 2);
+    if (!profile) return;
+    
+    if (!profile.value) {
+        showCreateJsonModal(profileName, async () => {
+            // Create new JSON for this profile
+            const profilePath = `./Profiles/${profileName}.json`;
+            const emptyJsonData = createEmptyJsonData();
+            
+            try {
+                const response = await fetch('/save-profile', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        path: profilePath,
+                        data: emptyJsonData
+                    })
+                });
+                
+                if (response.ok) {
+                    profile.value = profilePath;
+                    await saveGlobalSettings();
+                    renderProfilesList();
+                    showErrorMessage(`New JSON created for ${profileName}!`, 1);
+                } else {
+                    showErrorMessage('Failed to create JSON file', 2);
+                }
+            } catch (error) {
+                showErrorMessage('Error creating JSON file', 2);
+                console.error('Create JSON error:', error);
+            }
+        });
         return;
     }
     
@@ -578,25 +616,23 @@ async function deleteProfile(profileName) {
         return;
     }
     
-    if (!confirm(`Are you sure you want to delete ${profileName}? This action cannot be undone.`)) {
-        return;
-    }
-    
-    // If this is the active profile, switch to another one
-    if (globalSettings.activeSession === profileName) {
-        const remainingProfile = globalSettings.profiles.find(p => p.name !== profileName);
-        globalSettings.activeSession = remainingProfile ? remainingProfile.name : "profile1";
-    }
-    
-    // Remove profile from array
-    const profileIndex = globalSettings.profiles.findIndex(p => p.name === profileName);
-    if (profileIndex > -1) {
-        globalSettings.profiles.splice(profileIndex, 1);
-    }
-    
-    await saveGlobalSettings();
-    renderProfilesList();
-    showErrorMessage(`${profileName} deleted successfully`, 1);
+    showDeleteProfileModal(profileName, async () => {
+        // If this is the active profile, switch to another one
+        if (globalSettings.activeSession === profileName) {
+            const remainingProfile = globalSettings.profiles.find(p => p.name !== profileName);
+            globalSettings.activeSession = remainingProfile ? remainingProfile.name : "profile1";
+        }
+        
+        // Remove profile from array
+        const profileIndex = globalSettings.profiles.findIndex(p => p.name === profileName);
+        if (profileIndex > -1) {
+            globalSettings.profiles.splice(profileIndex, 1);
+        }
+        
+        await saveGlobalSettings();
+        renderProfilesList();
+        showErrorMessage(`${profileName} deleted successfully`, 1);
+    });
 }
 
 // =-=-=-=-=-=-=-=-=-=-=-=-=
@@ -1151,6 +1187,7 @@ function saveFolderChanges(modal, folderIdx) {
     const originalCover = targetFolder.cover || '';
     const originalAspectRatio = targetFolder.aspectRatio || '8:3';
     const originalWhiteText = targetFolder.whiteText || false;
+    const originalTags = targetFolder.folderTags || [];
     
     // Get new values from form
     const newName = modal.querySelector('#folder-name').value.trim();
@@ -1159,6 +1196,7 @@ function saveFolderChanges(modal, folderIdx) {
     const newAspectRatio = modal.querySelector('#folder-aspect-ratio-select').value.trim();
     const whiteTextBtn = modal.querySelector('#white-text-btn');
     const newWhiteText = whiteTextBtn ? whiteTextBtn.classList.contains('active') : false;
+    const newTagsInput = modal.querySelector('#folder-tags').value.trim();
     
     // Validation
     if (!newName) {
@@ -1178,6 +1216,14 @@ function saveFolderChanges(modal, folderIdx) {
         modal.querySelector('#folder-cover').focus();
         return;
     }
+    
+    // Validate tags
+    const tagValidation = validateTagInput(newTagsInput);
+    if (!tagValidation.valid) {
+        showErrorMessage(tagValidation.error, 2);
+        modal.querySelector('#folder-tags').focus();
+        return;
+    }
 
     // Check what changed
     const changes = [];
@@ -1187,12 +1233,20 @@ function saveFolderChanges(modal, folderIdx) {
     if (newAspectRatio !== originalAspectRatio) changes.push(`aspect ratio from "${originalAspectRatio}" to "${newAspectRatio}"`);
     if (newWhiteText !== originalWhiteText) changes.push(`text color to ${newWhiteText ? 'white' : 'dark'}`);
     
+    // Compare tags
+    const originalTagsStr = JSON.stringify(originalTags.sort());
+    const newTagsStr = JSON.stringify(tagValidation.tags.sort());
+    if (originalTagsStr !== newTagsStr) {
+        changes.push(`tags (${originalTags.length} → ${tagValidation.tags.length})`);
+    }
+    
     // Apply changes
     targetFolder.name = newName;
     targetFolder.color = newColor;
     targetFolder.cover = newCover;
     targetFolder.aspectRatio = newAspectRatio;
     targetFolder.whiteText = newWhiteText;
+    targetFolder.folderTags = tagValidation.tags;
     
     autoSave();
     render();
@@ -1216,6 +1270,7 @@ function saveEntryChanges(modal, entryIdx) {
     const originalAspectRatio = targetEntry.aspectRatio || '8:3';
     const originalLinks = targetEntry.links || [];
     const originalNote = targetEntry.note || '';
+    const originalTags = targetEntry.entryTags || [];
     
     // Get new values from form
     const newName = modal.querySelector('#entry-name').value.trim();
@@ -1223,6 +1278,7 @@ function saveEntryChanges(modal, entryIdx) {
     const newCover = modal.querySelector('#entry-cover').value.trim();
     const newAspectRatio = modal.querySelector('#entry-aspect-ratio-select').value.trim();
     const newNote = modal.querySelector('#entry-note').value.trim();
+    const newTagsInput = modal.querySelector('#entry-tags').value.trim();
     
     // Collect and validate links
     const linkInputs = modal.querySelectorAll('.link-input');
@@ -1264,6 +1320,14 @@ function saveEntryChanges(modal, entryIdx) {
         return;
     }
     
+    // Validate tags
+    const tagValidation = validateTagInput(newTagsInput);
+    if (!tagValidation.valid) {
+        showErrorMessage(tagValidation.error, 2);
+        modal.querySelector('#entry-tags').focus();
+        return;
+    }
+    
     // Check what changed
     const changes = [];
     if (newName !== originalName) changes.push(`name from "${originalName}" to "${newName}"`);
@@ -1279,6 +1343,13 @@ function saveEntryChanges(modal, entryIdx) {
         changes.push(`links (${originalLinks.length} → ${newLinks.length})`);
     }
     
+    // Compare tags
+    const originalTagsStr = JSON.stringify(originalTags.sort());
+    const newTagsStr = JSON.stringify(tagValidation.tags.sort());
+    if (originalTagsStr !== newTagsStr) {
+        changes.push(`tags (${originalTags.length} → ${tagValidation.tags.length})`);
+    }
+    
     // Apply changes
     targetEntry.name = newName;
     targetEntry.color = newColor;
@@ -1286,6 +1357,7 @@ function saveEntryChanges(modal, entryIdx) {
     targetEntry.aspectRatio = newAspectRatio;
     targetEntry.links = newLinks;
     targetEntry.note = newNote;
+    targetEntry.entryTags = tagValidation.tags;
     
     autoSave();
     render();
@@ -1531,6 +1603,26 @@ function openAllLinks(links) {
     }
 }
 
+function createEmptyJsonData() {
+    return {
+        name: "Root",
+        cover: "",
+        folders: [],
+        entries: [],
+        settings: {
+            defaultFolderAspectRatio: '8:3',
+            defaultFolderColor: '#28a745',
+            defaultEntryAspectRatio: '8:3',
+            defaultEntryColor: '#6c757d',
+            defaultFolderWhiteText: false,
+            linksExpandedByDefault: true,
+            noteExpandedByDefault: true,
+            tagsExpandedByDefault: false,
+            entryClickAction: 'openLinks'
+        }
+    };
+}
+
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 // BATCH OPERATIONS & INTERACTIONS
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -1546,6 +1638,7 @@ function createBatchActionsBar() {
             <button id="batch-clear-btn" class="batch-clear-btn">Clear</button>
             <button id="batch-move-btn" class="batch-move-btn">📁 Move</button>
             <button id="batch-open-btn" class="batch-open-btn">🚀 Open All</button>
+            <button id="batch-export-btn" class="batch-export-btn">📤 Export as JSON</button>
             <button id="batch-duplicate-btn" class="batch-duplicate-btn">📄 Duplicate</button>
             <button id="batch-delete-btn" class="batch-delete-btn">🗑️ Delete</button>
         </div>
@@ -1560,6 +1653,13 @@ function createBatchActionsBar() {
             return;
         }
         openAllSelectedItems();
+    };
+    bar.querySelector('#batch-export-btn').onclick = () => {
+        if (selectedItems.size === 0) {
+            showErrorMessage('No items selected to export', 1);
+            return;
+        }
+        exportSelectedItemsAsJson();
     };
     bar.querySelector('#batch-duplicate-btn').onclick = () => {
         if (selectedItems.size === 0) {
@@ -1924,6 +2024,46 @@ function deleteSelectedItemsWithConfirmation() {
     });
 }
 
+function exportSelectedItemsAsJson() {
+    const currentFolder = getCurrentFolder();
+    const selectedFolders = [];
+    const selectedEntries = [];
+    
+    // Collect selected items
+    selectedItems.forEach(itemId => {
+        const [type, index] = itemId.split(':');
+        const idx = parseInt(index);
+        
+        if (type === 'folder' && currentFolder.folders[idx]) {
+            selectedFolders.push(deepCloneItem(currentFolder.folders[idx]));
+        } else if (type === 'entry' && currentFolder.entries[idx]) {
+            selectedEntries.push(deepCloneItem(currentFolder.entries[idx]));
+        }
+    });
+    
+    // Create new JSON with selected items as root
+    const exportData = createEmptyJsonData();
+    exportData.folders = selectedFolders;
+    exportData.entries = selectedEntries;
+    
+    try {
+        const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+        const blob = new Blob([JSON.stringify(exportData, null, 2)], {type: 'application/json'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `batch_export_${timestamp}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        
+        const count = selectedItems.size;
+        showErrorMessage(`Successfully exported ${count} item${count !== 1 ? 's' : ''} as JSON!`, 1);
+    } catch (error) {
+        showErrorMessage('Failed to export selected items', 2);
+        console.error('Export error:', error);
+    }
+}
+
 function setupMainAreaDragDrop(contentDiv) {
     let dragCounter = 0;
 
@@ -2285,6 +2425,58 @@ function extractDomainFromUrl(url) {
     }
 }
 
+// =-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// SEARCH & FILTER UTILITIES
+// =-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+function parseTagsFromInput(tagInput) {
+    if (!tagInput || !tagInput.trim()) {
+        return [];
+    }
+    
+    const tags = tagInput.split(';')
+        .map(tag => tag.trim())
+        .filter(tag => tag.length > 0);
+    
+    return tags;
+}
+
+function validateTagInput(tagInput) {
+    if (!tagInput || !tagInput.trim()) {
+        return { valid: true, tags: [] };
+    }
+    
+    // Check for proper semicolon usage
+    const trimmedInput = tagInput.trim();
+    
+    // Parse tags
+    const tags = parseTagsFromInput(trimmedInput);
+    
+    // Validate each tag
+    for (let tag of tags) {
+        if (tag.length === 0) {
+            return { 
+                valid: false, 
+                error: 'Empty tags are not allowed. Remove extra semicolons or add content between them.' 
+            };
+        }
+        if (tag.length > 50) {
+            return { 
+                valid: false, 
+                error: `Tag "${tag}" is too long. Maximum length is 50 characters.` 
+            };
+        }
+    }
+    
+    return { valid: true, tags: tags };
+}
+
+function formatTagsForDisplay(tags) {
+    if (!tags || tags.length === 0) {
+        return '';
+    }
+    return tags.join('; ') + (tags.length > 0 ? ';' : '');
+}
+
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 // MODAL DIALOGS & USER INTERFACE
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -2318,22 +2510,37 @@ function showFolderEditModal(folder, folderIdx) {
                 </div>
                 
                 <div class="form-group">
-                    <label>Cover Image URL:</label>
-                    <input type="url" id="folder-cover" value="${folder.cover || ''}" placeholder="https://example.com/image.jpg">
-                    <div class="cover-preview" style="margin-top: 10px;">
-                        ${folder.cover ? `<div style="font-size: 12px; color: #666; margin-bottom: 5px;">Current cover: ${getDisplayableImageSource(folder.cover)}</div>` : ''}
+                    <div class="expandable-header" id="cover-header">
+                        <span class="expand-arrow" id="cover-arrow">▸</span>
+                        <label>Cover Image:</label>
                     </div>
-                    <div style="margin-top: 10px; display: flex; gap: 10px; align-items: center;">
-                        <button type="button" id="upload-folder-cover-btn" class="btn-secondary">📂 Upload Image</button>
-                        <button type="button" id="paste-folder-cover-btn" class="btn-info">📋 Paste URL</button>
-                        <div class="aspect-ratio-dropdown">
-                            <select id="folder-aspect-ratio-select">
-                                <option value="3:4" ${(folder.aspectRatio || '8:3') === '3:4' ? 'selected' : ''}>3:4 (Portrait)</option>
-                                <option value="1:1" ${(folder.aspectRatio || '8:3') === '1:1' ? 'selected' : ''}>1:1 (Square)</option>
-                                <option value="3:2" ${(folder.aspectRatio || '8:3') === '3:2' ? 'selected' : ''}>3:2 (Photo)</option>
-                                <option value="8:3" ${(folder.aspectRatio || '8:3') === '8:3' ? 'selected' : ''}>8:3 (Ultrawide)</option>
-                            </select>
+                    <div id="cover-section" class="expandable-content">
+                        <input type="url" id="folder-cover" value="${folder.cover || ''}" placeholder="https://example.com/image.jpg">
+                        <div class="cover-preview" style="margin-top: 10px;">
+                            ${folder.cover ? `<div style="font-size: 12px; color: #666; margin-bottom: 5px;">Current cover: ${getDisplayableImageSource(folder.cover)}</div>` : ''}
                         </div>
+                        <div style="margin-top: 10px; display: flex; gap: 10px; align-items: center;">
+                            <button type="button" id="upload-folder-cover-btn" class="btn-secondary">📂 Upload Image</button>
+                            <button type="button" id="paste-folder-cover-btn" class="btn-info">📋 Paste URL</button>
+                            <div class="aspect-ratio-dropdown">
+                                <select id="folder-aspect-ratio-select">
+                                    <option value="3:4" ${(folder.aspectRatio || '8:3') === '3:4' ? 'selected' : ''}>3:4 (Portrait)</option>
+                                    <option value="1:1" ${(folder.aspectRatio || '8:3') === '1:1' ? 'selected' : ''}>1:1 (Square)</option>
+                                    <option value="3:2" ${(folder.aspectRatio || '8:3') === '3:2' ? 'selected' : ''}>3:2 (Photo)</option>
+                                    <option value="8:3" ${(folder.aspectRatio || '8:3') === '8:3' ? 'selected' : ''}>8:3 (Ultrawide)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <div class="expandable-header" id="tags-header">
+                        <span class="expand-arrow" id="tags-arrow">▸</span>
+                        <label>Tags:</label>
+                    </div>
+                    <div id="tags-section" class="expandable-content">
+                        <textarea id="folder-tags" class="tags-textarea" placeholder="Enter tags separated by semicolons: tag1; tag2; tag3;" rows="1">${formatTagsForDisplay(folder.folderTags || [])}</textarea>
                     </div>
                 </div>
                 
@@ -2347,6 +2554,17 @@ function showFolderEditModal(folder, folderIdx) {
     `;
     
     document.body.appendChild(modal);
+    
+    // Setup expandable sections
+    setupExpandableSection('cover-header', 'cover-arrow', 'cover-section', false);
+    setupExpandableSection('tags-header', 'tags-arrow', 'tags-section', true);
+    
+    // Auto-resize textarea
+    const tagsTextarea = modal.querySelector('#folder-tags');
+    tagsTextarea.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = Math.max(38, this.scrollHeight) + 'px';
+    });
     
     // Sync color picker and hex input
     const colorPicker = modal.querySelector('#folder-color');
@@ -2462,21 +2680,26 @@ function showEntryEditModal(entryData, entryIdx) {
                 </div>
                 
                 <div class="form-group">
-                    <label>Cover Image URL:</label>
-                    <input type="url" id="entry-cover" value="${actualEntry.cover || ''}" placeholder="https://example.com/image.jpg">
-                    <div class="cover-preview" style="margin-top: 10px;">
-                        ${actualEntry.cover ? `<div style="font-size: 12px; color: #666; margin-bottom: 5px;">Current cover: ${getDisplayableImageSource(actualEntry.cover)}</div>` : ''}
+                    <div class="expandable-header" id="cover-header">
+                        <span class="expand-arrow" id="cover-arrow">▸</span>
+                        <label>Cover Image:</label>
                     </div>
-                    <div style="margin-top: 10px; display: flex; gap: 10px; align-items: center;">
-                        <button type="button" id="upload-entry-cover-btn" class="btn-secondary">📂 Upload Image</button>
-                        <button type="button" id="paste-entry-cover-btn" class="btn-info">📋 Paste URL</button>
-                        <div class="aspect-ratio-dropdown">
-                            <select id="entry-aspect-ratio-select">
-                                <option value="3:4" ${(actualEntry.aspectRatio || '8:3') === '3:4' ? 'selected' : ''}>3:4 (Portrait)</option>
-                                <option value="1:1" ${(actualEntry.aspectRatio || '8:3') === '1:1' ? 'selected' : ''}>1:1 (Square)</option>
-                                <option value="3:2" ${(actualEntry.aspectRatio || '8:3') === '3:2' ? 'selected' : ''}>3:2 (Photo)</option>
-                                <option value="8:3" ${(actualEntry.aspectRatio || '8:3') === '8:3' ? 'selected' : ''}>8:3 (Ultrawide)</option>
-                            </select>
+                    <div id="cover-section" class="expandable-content">
+                        <input type="url" id="entry-cover" value="${actualEntry.cover || ''}" placeholder="https://example.com/image.jpg">
+                        <div class="cover-preview" style="margin-top: 10px;">
+                            ${actualEntry.cover ? `<div style="font-size: 12px; color: #666; margin-bottom: 5px;">Current cover: ${getDisplayableImageSource(actualEntry.cover)}</div>` : ''}
+                        </div>
+                        <div style="margin-top: 10px; display: flex; gap: 10px; align-items: center;">
+                            <button type="button" id="upload-entry-cover-btn" class="btn-secondary">📂 Upload Image</button>
+                            <button type="button" id="paste-entry-cover-btn" class="btn-info">📋 Paste URL</button>
+                            <div class="aspect-ratio-dropdown">
+                                <select id="entry-aspect-ratio-select">
+                                    <option value="3:4" ${(actualEntry.aspectRatio || '8:3') === '3:4' ? 'selected' : ''}>3:4 (Portrait)</option>
+                                    <option value="1:1" ${(actualEntry.aspectRatio || '8:3') === '1:1' ? 'selected' : ''}>1:1 (Square)</option>
+                                    <option value="3:2" ${(actualEntry.aspectRatio || '8:3') === '3:2' ? 'selected' : ''}>3:2 (Photo)</option>
+                                    <option value="8:3" ${(actualEntry.aspectRatio || '8:3') === '8:3' ? 'selected' : ''}>8:3 (Ultrawide)</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2508,6 +2731,16 @@ function showEntryEditModal(entryData, entryIdx) {
                     </div>
                 </div>
                 
+                <div class="form-group">
+                    <div class="expandable-header" id="tags-header">
+                        <span class="expand-arrow" id="tags-arrow">▸</span>
+                        <label>Tags:</label>
+                    </div>
+                    <div id="tags-section" class="expandable-content">
+                        <textarea id="entry-tags" class="tags-textarea" placeholder="Enter tags separated by semicolons: tag1; tag2; tag3;" rows="1">${formatTagsForDisplay(actualEntry.entryTags || [])}</textarea>
+                    </div>
+                </div>
+                
                 <div class="modal-actions">
                     <div style="display: flex; gap: 8px; justify-content: center;">
                         <button id="save-entry-btn" type="button" class="btn-primary">💾 Save Changes</button>
@@ -2525,8 +2758,17 @@ function showEntryEditModal(entryData, entryIdx) {
     const linksContainer = modal.querySelector('#links-container');
     renderLinksFromJSON(actualEntry.links || [], linksContainer);
     
+    setupExpandableSection('cover-header', 'cover-arrow', 'cover-section', false);
     setupExpandableSection('links-header', 'links-arrow', 'links-section');
     setupExpandableSection('note-header', 'note-arrow', 'note-section');
+    setupExpandableSection('tags-header', 'tags-arrow', 'tags-section', true);
+    
+    // Auto-resize textarea
+    const tagsTextarea = modal.querySelector('#entry-tags');
+    tagsTextarea.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = Math.max(38, this.scrollHeight) + 'px';
+    });
     
     // Sync color picker and hex input
     const colorPicker = modal.querySelector('#entry-color');
@@ -2984,7 +3226,7 @@ function showSettingsModal() {
                     </div>
                     
                     <div class="settings-section">
-                        <h4>Edit Entry Menu Behavior</h4>
+                        <h4>Edit Menu Behavior</h4>
                         
                         <div class="settings-form-group">
                             <label class="settings-label">Links section expanded by default:</label>
@@ -3001,6 +3243,16 @@ function showSettingsModal() {
                             <div class="settings-control">
                                 <label class="toggle-switch">
                                     <input type="checkbox" id="note-expanded-default" ${data.settings.noteExpandedByDefault ? 'checked' : ''}>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="settings-form-group">
+                            <label class="settings-label">Tags section expanded by default:</label>
+                            <div class="settings-control">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="tags-expanded-default" ${data.settings.tagsExpandedByDefault ? 'checked' : ''}>
                                     <span class="toggle-slider"></span>
                                 </label>
                             </div>
@@ -3112,6 +3364,7 @@ function showSettingsModal() {
         data.settings.defaultFolderWhiteText = modal.querySelector('#default-folder-white-text').checked;
         data.settings.linksExpandedByDefault = modal.querySelector('#links-expanded-default').checked;
         data.settings.noteExpandedByDefault = modal.querySelector('#note-expanded-default').checked;
+        data.settings.tagsExpandedByDefault = modal.querySelector('#tags-expanded-default').checked;
         data.settings.entryClickAction = modal.querySelector('#entry-click-action').value;
         
         autoSave();
@@ -3122,7 +3375,111 @@ function showSettingsModal() {
     setupModalEscapeKey(modal);
 }
 
-function setupExpandableSection(headerId, arrowId, sectionId) {
+function showCreateJsonModal(profileName, onConfirm) {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create New JSON?</h3>
+                <button class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <div style="margin-bottom: 20px;">This profile has no JSON assigned. Would you like to create a new empty JSON file for this profile?</div>
+                </div>
+                <div class="modal-actions">
+                    <button id="create-json-btn" type="button" class="btn-primary">Create New JSON</button>
+                    <button id="create-cancel-btn" type="button" class="btn-secondary">Cancel</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Event listeners
+    modal.querySelector('.close-btn').onclick = () => modal.remove();
+    modal.querySelector('#create-cancel-btn').onclick = () => modal.remove();
+    
+    let mouseDownOnModal = false;
+    modal.addEventListener('mousedown', (e) => {
+        if (e.target === modal) {
+            mouseDownOnModal = true;
+        } else {
+            mouseDownOnModal = false;
+        }
+    });
+
+    modal.addEventListener('mouseup', (e) => {
+        if (e.target === modal && mouseDownOnModal) {
+            modal.remove();
+        }
+        mouseDownOnModal = false;
+    });
+    
+    // Create confirmation
+    modal.querySelector('#create-json-btn').onclick = () => {
+        modal.remove();
+        onConfirm();
+    };
+    
+    setupModalEscapeKey(modal);
+}
+
+function showDeleteProfileModal(profileName, onConfirm) {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Delete Profile?</h3>
+                <button class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <div style="margin-bottom: 20px;">Are you sure you want to delete profile "${profileName}"? This action cannot be undone.</div>
+                </div>
+                <div class="modal-actions">
+                    <button id="delete-profile-confirm-btn" type="button" class="btn-danger">Delete</button>
+                    <button id="delete-profile-cancel-btn" type="button" class="btn-secondary">Cancel</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Event listeners
+    modal.querySelector('.close-btn').onclick = () => modal.remove();
+    modal.querySelector('#delete-profile-cancel-btn').onclick = () => modal.remove();
+    
+    let mouseDownOnModal = false;
+    modal.addEventListener('mousedown', (e) => {
+        if (e.target === modal) {
+            mouseDownOnModal = true;
+        } else {
+            mouseDownOnModal = false;
+        }
+    });
+
+    modal.addEventListener('mouseup', (e) => {
+        if (e.target === modal && mouseDownOnModal) {
+            modal.remove();
+        }
+        mouseDownOnModal = false;
+    });
+    
+    // Delete confirmation
+    modal.querySelector('#delete-profile-confirm-btn').onclick = () => {
+        modal.remove();
+        onConfirm();
+    };
+    
+    setupModalEscapeKey(modal);
+}
+
+function setupExpandableSection(headerId, arrowId, sectionId, useSettings = true) {
     const header = document.getElementById(headerId);
     const arrow = document.getElementById(arrowId);
     const section = document.getElementById(sectionId);
@@ -3139,15 +3496,29 @@ function setupExpandableSection(headerId, arrowId, sectionId) {
         }
     };
     
-    // Use settings to determine default state
-    initializeSettings();
-    const sectionType = sectionId === 'links-section' ? 'linksExpandedByDefault' : 'noteExpandedByDefault';
-    const shouldExpand = data.settings[sectionType];
-    
-    if (shouldExpand) {
-        section.classList.add('expanded');
-        arrow.textContent = '▾';
+    // Use settings to determine default state only if useSettings is true
+    if (useSettings) {
+        initializeSettings();
+        let sectionType;
+        if (sectionId === 'links-section') {
+            sectionType = 'linksExpandedByDefault';
+        } else if (sectionId === 'note-section') {
+            sectionType = 'noteExpandedByDefault';
+        } else if (sectionId === 'tags-section') {
+            sectionType = 'tagsExpandedByDefault';
+        }
+
+        const shouldExpand = data.settings[sectionType];
+        
+        if (shouldExpand) {
+            section.classList.add('expanded');
+            arrow.textContent = '▾';
+        } else {
+            section.classList.remove('expanded');
+            arrow.textContent = '▸';
+        }
     } else {
+        // For cover and tags sections, default to collapsed
         section.classList.remove('expanded');
         arrow.textContent = '▸';
     }
