@@ -15,6 +15,11 @@ let notificationContainer = null;
 let saveTimeout = null;
 let selectedItems = new Set();
 let selectionMode = false;
+let searchTimeout = null;
+let isSearchActive = false;
+let searchResults = null;
+let searchHistory = [];
+let searchExpanded = false;
 
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=-
 // CORE DATA & STATE MANAGEMENT
@@ -902,6 +907,7 @@ function navigateToPath(newPath) {
     addToHistory(newPath);
     currentPath = [...newPath];
     clearSelection();
+    clearSearch();
     render();
 }
 
@@ -915,6 +921,7 @@ function navigateUp() {
     addToHistory(newPath);
     currentPath = newPath;
     clearSelection();
+    clearSearch();
     render();
 }
 
@@ -925,9 +932,19 @@ function navigateBack() {
     }
     
     historyIndex--;
-    currentPath = [...navigationHistory[historyIndex]];
-    clearSelection();
-    render();
+    const historyItem = navigationHistory[historyIndex];
+    
+    if (historyItem && historyItem.type === 'search') {
+        currentPath = [...historyItem.path];
+        const searchInput = document.getElementById('search-input');
+        searchInput.value = historyItem.searchTerm;
+        executeSearch(historyItem.searchTerm);
+    } else {
+        currentPath = [...(historyItem || [])];
+        clearSearch();
+        clearSelection();
+        render();
+    }
 }
 
 function navigateForward() {
@@ -937,9 +954,19 @@ function navigateForward() {
     }
     
     historyIndex++;
-    currentPath = [...navigationHistory[historyIndex]];
-    clearSelection();
-    render();
+    const historyItem = navigationHistory[historyIndex];
+    
+    if (historyItem && historyItem.type === 'search') {
+        currentPath = [...historyItem.path];
+        const searchInput = document.getElementById('search-input');
+        searchInput.value = historyItem.searchTerm;
+        executeSearch(historyItem.searchTerm);
+    } else {
+        currentPath = [...(historyItem || [])];
+        clearSearch();
+        clearSelection();
+        render();
+    }
 }
 
 function initializeNavigationHistory() {
@@ -1825,11 +1852,11 @@ function duplicateSelectedItems() {
     itemsToDuplicate.forEach(({type, item}) => {
         if (type === 'folder') {
             const duplicatedFolder = deepCloneItem(item);
-            duplicatedFolder.name = item.name + '/Copy';
+            duplicatedFolder.name = item.name + '_Copy';
             folder.folders.push(duplicatedFolder);
         } else if (type === 'entry') {
             const duplicatedEntry = deepCloneItem(item);
-            duplicatedEntry.name = item.name + '/Copy';
+            duplicatedEntry.name = item.name + '_Copy';
             folder.entries.push(duplicatedEntry);
         }
     });
@@ -2417,6 +2444,422 @@ function extractDomainFromUrl(url) {
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 // SEARCH & FILTER UTILITIES
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+function initializeSearchFunctionality() {
+    const searchToggleBtn = document.getElementById('search-toggle-btn');
+    const searchInput = document.getElementById('search-input');
+    
+    searchToggleBtn.onclick = handleSearchToggle;
+    searchInput.addEventListener('input', handleSearchInput);
+    searchInput.addEventListener('focus', handleSearchFocus);
+    
+    document.addEventListener('click', handleSearchOutsideClick);
+}
+
+function handleSearchToggle() {
+    const toggleBtn = document.getElementById('search-toggle-btn');
+    const searchContainer = document.getElementById('search-bar-container');
+    const searchInput = document.getElementById('search-input');
+    const helpBox = document.getElementById('search-help-box');
+    
+    if (!searchExpanded) {
+        searchExpanded = true;
+        toggleBtn.classList.add('active');
+        toggleBtn.style.display = 'none';
+        searchContainer.classList.add('expanded');
+        
+        setTimeout(() => {
+            searchInput.focus();
+            if (!searchInput.value.trim()) {
+                helpBox.classList.add('visible');
+            }
+        }, 100);
+    }
+}
+
+function handleSearchInput(e) {
+    const searchText = e.target.value;
+    const helpBox = document.getElementById('search-help-box');
+    
+    if (searchText.trim()) {
+        helpBox.classList.remove('visible');
+        performSearch(searchText);
+    } else {
+        helpBox.classList.add('visible');
+        clearSearch();
+    }
+}
+
+function handleSearchFocus() {
+    const searchInput = document.getElementById('search-input');
+    const helpBox = document.getElementById('search-help-box');
+    
+    if (!searchInput.value.trim()) {
+        helpBox.classList.add('visible');
+    }
+}
+
+function handleSearchOutsideClick(e) {
+    const searchContainer = document.getElementById('search-container');
+    const toggleBtn = document.getElementById('search-toggle-btn');
+    const searchBarContainer = document.getElementById('search-bar-container');
+    const helpBox = document.getElementById('search-help-box');
+    const searchInput = document.getElementById('search-input');
+    
+    if (searchExpanded && !searchContainer.contains(e.target)) {
+        if (!searchInput.value.trim()) {
+            searchExpanded = false;
+            toggleBtn.classList.remove('active');
+            toggleBtn.style.display = 'flex';
+            searchBarContainer.classList.remove('expanded');
+            helpBox.classList.remove('visible');
+            clearSearch();
+        }
+    }
+}
+
+function performSearch(searchText) {
+    if (searchTimeout) {
+        clearTimeout(searchTimeout);
+    }
+    
+    searchTimeout = setTimeout(() => {
+        executeSearch(searchText);
+    }, 3000);
+}
+
+function executeSearch(searchText) {
+    if (!searchText || !searchText.trim()) {
+        clearSearch();
+        return;
+    }
+    
+    const trimmedSearch = searchText.trim();
+    const results = performSearchOperation(trimmedSearch, getCurrentFolder(), [...currentPath]);
+    
+    if (results.length === 0) {
+        displaySearchResults([], trimmedSearch);
+        return;
+    }
+    
+    addSearchToHistory(trimmedSearch);
+    displaySearchResults(results, trimmedSearch);
+}
+
+function performSearchOperation(searchText, folder, currentFolderPath) {
+    const results = [];
+    const searchQueries = parseSearchQuery(searchText);
+    searchInFolder(folder, currentFolderPath, searchQueries, results);
+    return results;
+}
+
+function parseSearchQuery(searchText) {
+    const queries = [];
+    
+    if (searchText.includes('.') && searchText.includes(' ')) {
+        const parts = searchText.split(';').map(part => part.trim()).filter(part => part);
+        
+        for (const part of parts) {
+            if (part.startsWith('.')) {
+                const spaceIndex = part.indexOf(' ');
+                if (spaceIndex > 0) {
+                    const keyword = part.substring(1, spaceIndex).toLowerCase();
+                    const searchTerm = part.substring(spaceIndex + 1).trim();
+                    
+                    if (searchTerm) {
+                        queries.push({
+                            type: 'keyword',
+                            keyword: keyword,
+                            term: searchTerm.toLowerCase()
+                        });
+                    }
+                }
+            } else {
+                queries.push({
+                    type: 'general',
+                    term: part.toLowerCase()
+                });
+            }
+        }
+    } else {
+        queries.push({
+            type: 'general',
+            term: searchText.toLowerCase()
+        });
+    }
+    
+    return queries;
+}
+
+function searchInFolder(folder, folderPath, queries, results) {
+    if (folder.folders) {
+        folder.folders.forEach((subfolder, index) => {
+            const subfolderPath = [...folderPath, index];
+            
+            if (matchesSearchQueries(subfolder, 'folder', queries)) {
+                results.push({
+                    type: 'folder',
+                    item: subfolder,
+                    path: subfolderPath,
+                    pathDisplay: getPathDisplayString(subfolderPath)
+                });
+            }
+            
+            searchInFolder(subfolder, subfolderPath, queries, results);
+        });
+    }
+    
+    if (folder.entries) {
+        folder.entries.forEach((entry, index) => {
+            if (matchesSearchQueries(entry, 'entry', queries)) {
+                results.push({
+                    type: 'entry',
+                    item: entry,
+                    path: folderPath,
+                    entryIndex: index,
+                    pathDisplay: getPathDisplayString(folderPath)
+                });
+            }
+        });
+    }
+}
+
+function matchesSearchQueries(item, itemType, queries) {
+    return queries.every(query => matchesSingleQuery(item, itemType, query));
+}
+
+function matchesSingleQuery(item, itemType, query) {
+    if (query.type === 'general') {
+        const searchTerm = query.term;
+        
+        if (item.name && item.name.toLowerCase().includes(searchTerm)) {
+            return true;
+        }
+        
+        const tags = itemType === 'folder' ? (item.folderTags || []) : (item.entryTags || []);
+        if (tags.some(tag => tag.toLowerCase().includes(searchTerm))) {
+            return true;
+        }
+        
+        if (itemType === 'entry' && item.links) {
+            if (item.links.some(link => link && link.toLowerCase().includes(searchTerm))) {
+                return true;
+            }
+        }
+        
+        return false;
+    } else if (query.type === 'keyword') {
+        const keyword = query.keyword;
+        const searchTerm = query.term;
+        
+        switch (keyword) {
+            case 'name':
+                return item.name && item.name.toLowerCase().includes(searchTerm);
+            case 'fname':
+                return itemType === 'folder' && item.name && item.name.toLowerCase().includes(searchTerm);
+            case 'ename':
+                return itemType === 'entry' && item.name && item.name.toLowerCase().includes(searchTerm);
+            case 'link':
+                return itemType === 'entry' && item.links && 
+                       item.links.some(link => link && link.toLowerCase().includes(searchTerm));
+            case 'tag':
+                const allTags = itemType === 'folder' ? (item.folderTags || []) : (item.entryTags || []);
+                return allTags.some(tag => tag.toLowerCase().includes(searchTerm));
+            case 'ftag':
+                return itemType === 'folder' && (item.folderTags || []).some(tag => tag.toLowerCase().includes(searchTerm));
+            case 'etag':
+                return itemType === 'entry' && (item.entryTags || []).some(tag => tag.toLowerCase().includes(searchTerm));
+            default:
+                return false;
+        }
+    }
+    
+    return false;
+}
+
+function getPathDisplayString(path) {
+    if (path.length === 0) return 'Root';
+    
+    let pathString = 'Root';
+    let folder = data;
+    
+    for (let i = 0; i < path.length; i++) {
+        folder = folder.folders[path[i]];
+        pathString += ' / ' + folder.name;
+    }
+    
+    return pathString;
+}
+
+function displaySearchResults(results, searchTerm) {
+    isSearchActive = true;
+    searchResults = { results, searchTerm };
+    
+    const mainView = document.getElementById('main-view');
+    mainView.innerHTML = '';
+    
+    const searchHeader = document.createElement('div');
+    searchHeader.className = 'search-results-header';
+    searchHeader.innerHTML = `
+        <div class="search-results-info">
+            <h3>Search Results for: "${searchTerm}"</h3>
+            <p>Found ${results.length} result${results.length === 1 ? '' : 's'}</p>
+        </div>
+    `;
+    mainView.appendChild(searchHeader);
+    
+    const contentWrapper = document.createElement('div');
+    contentWrapper.style.padding = '20px';
+    
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'content-container search-results';
+    
+    const sortedResults = sortSearchResults(results, currentSort);
+    
+    sortedResults.forEach((result) => {
+        const div = document.createElement('div');
+        div.className = result.type === 'folder' ? 'folder search-result' : 'entry search-result';
+        
+        if (result.type === 'folder') {
+            const totalEntries = getTotalEntries(result.item);
+            div.innerHTML = `
+                <img src="/static/images/folder.png" alt="Cover" title="Default folder icon">
+                <div class="folder-name">📁 ${result.item.name}</div>
+                <div class="folder-count">${totalEntries} entries</div>
+                <div class="search-result-path">📍 ${result.pathDisplay}</div>
+            `;
+        } else {
+            const linksCount = getLinksCount(result.item);
+            div.innerHTML = `
+                <img src="/static/images/entry.png" alt="Cover" title="Default entry icon">
+                <div class="entry-title">${result.item.name}</div>
+                <div class="entry-links-count">${linksCount} links</div>
+                <div class="search-result-path">📍 ${result.pathDisplay}</div>
+            `;
+        }
+        
+        div.onclick = () => navigateToSearchResult(result);
+        contentDiv.appendChild(div);
+    });
+    
+    if (results.length === 0) {
+        const emptyDiv = document.createElement('div');
+        emptyDiv.className = 'empty-message';
+        emptyDiv.textContent = `No results found for "${searchTerm}"`;
+        contentDiv.appendChild(emptyDiv);
+    }
+    
+    contentWrapper.appendChild(contentDiv);
+    mainView.appendChild(contentWrapper);
+    
+    setTimeout(() => applySearchResultColors(), 0);
+}
+
+function sortSearchResults(results, sortType) {
+    const resultsCopy = [...results];
+    
+    switch (sortType) {
+        case 'name-asc':
+            resultsCopy.sort((a, b) => (a.item.name || '').localeCompare(b.item.name || ''));
+            break;
+        case 'name-desc':
+            resultsCopy.sort((a, b) => (b.item.name || '').localeCompare(a.item.name || ''));
+            break;
+        case 'count-asc':
+            resultsCopy.sort((a, b) => {
+                const aCount = a.type === 'folder' ? getTotalEntries(a.item) : getLinksCount(a.item);
+                const bCount = b.type === 'folder' ? getTotalEntries(b.item) : getLinksCount(b.item);
+                return aCount - bCount;
+            });
+            break;
+        case 'count-desc':
+            resultsCopy.sort((a, b) => {
+                const aCount = a.type === 'folder' ? getTotalEntries(a.item) : getLinksCount(a.item);
+                const bCount = b.type === 'folder' ? getTotalEntries(b.item) : getLinksCount(b.item);
+                return bCount - aCount;
+            });
+            break;
+    }
+    
+    return resultsCopy;
+}
+
+function applySearchResultColors() {
+    if (!searchResults || !searchResults.results) return;
+    
+    const folders = document.querySelectorAll('.folder.search-result');
+    const entries = document.querySelectorAll('.entry.search-result');
+    
+    folders.forEach((folderElement, index) => {
+        const folderResults = searchResults.results.filter(r => r.type === 'folder');
+        if (folderResults[index]) {
+            const result = folderResults[index];
+            const color = result.item.color || '#28a745';
+            const whiteText = result.item.whiteText || false;
+            
+            const variations = createColorVariations(color, 'folder');
+            folderElement.style.setProperty('--folder-bg-color', variations.gradient);
+            folderElement.style.setProperty('--folder-border-color', variations.border);
+            
+            const folderName = folderElement.querySelector('.folder-name');
+            const folderCount = folderElement.querySelector('.folder-count');
+            
+            if (whiteText) {
+                folderName.style.color = 'white';
+                folderCount.style.color = '#e0e0e0e0';
+            } else {
+                folderName.style.color = '#333';
+                folderCount.style.color = '#474747ff';
+            }
+        }
+    });
+    
+    entries.forEach((entryElement, index) => {
+        const entryResults = searchResults.results.filter(r => r.type === 'entry');
+        if (entryResults[index]) {
+            const result = entryResults[index];
+            const color = result.item.color || '#6c757d';
+            const variations = createColorVariations(color, 'entry');
+            entryElement.style.setProperty('--entry-border-color', variations.gradient);
+        }
+    });
+}
+
+function navigateToSearchResult(result) {
+    if (result.type === 'folder') {
+        navigateToPath(result.path);
+    } else {
+        navigateToPath(result.path);
+    }
+    clearSearch();
+}
+
+function clearSearch() {
+    isSearchActive = false;
+    searchResults = null;
+    
+    if (searchTimeout) {
+        clearTimeout(searchTimeout);
+        searchTimeout = null;
+    }
+    
+    render();
+}
+
+function addSearchToHistory(searchTerm) {
+    const searchState = {
+        type: 'search',
+        searchTerm: searchTerm,
+        path: [...currentPath]
+    };
+    
+    if (historyIndex < navigationHistory.length - 1) {
+        navigationHistory = navigationHistory.slice(0, historyIndex + 1);
+    }
+    
+    navigationHistory.push(searchState);
+    historyIndex = navigationHistory.length - 1;
+}
+
 function parseTagsFromInput(tagInput) {
     if (!tagInput || !tagInput.trim()) {
         return [];
@@ -4058,94 +4501,9 @@ document.addEventListener('DOMContentLoaded', async function() {
             reader.readAsText(file);
         }
     };
-
-    // Search functionality
-    let searchExpanded = false;
     
-    document.getElementById('search-toggle-btn').onclick = () => {
-        const toggleBtn = document.getElementById('search-toggle-btn');
-        const searchContainer = document.getElementById('search-bar-container');
-        const searchInput = document.getElementById('search-input');
-        const helpBox = document.getElementById('search-help-box');
-        
-        if (!searchExpanded) {
-            // Expand search
-            searchExpanded = true;
-            toggleBtn.classList.add('active');
-            toggleBtn.style.display = 'none';
-            searchContainer.classList.add('expanded');
-            
-            // Focus on input after animation
-            setTimeout(() => {
-                searchInput.focus();
-                // Show help box if input is empty
-                if (!searchInput.value.trim()) {
-                    helpBox.classList.add('visible');
-                }
-            }, 100);
-        }
-    };
-    
-    // Handle search input events
-    document.getElementById('search-input').addEventListener('input', (e) => {
-        const searchText = e.target.value.trim();
-        const helpBox = document.getElementById('search-help-box');
-        
-        // Hide help box when user starts typing
-        if (searchText) {
-            helpBox.classList.remove('visible');
-            // TODO: Call search function here
-            performSearch(searchText);
-        } else {
-            helpBox.classList.add('visible');
-            // TODO: Clear search results
-            clearSearch();
-        }
-    });
-    
-    // Handle focus events for help box
-    document.getElementById('search-input').addEventListener('focus', () => {
-        const searchInput = document.getElementById('search-input');
-        const helpBox = document.getElementById('search-help-box');
-        
-        if (!searchInput.value.trim()) {
-            helpBox.classList.add('visible');
-        }
-    });
-    
-    // Handle blur events and clicking outside
-    document.addEventListener('click', (e) => {
-        const searchContainer = document.getElementById('search-container');
-        const toggleBtn = document.getElementById('search-toggle-btn');
-        const searchBarContainer = document.getElementById('search-bar-container');
-        const helpBox = document.getElementById('search-help-box');
-        
-        if (searchExpanded && !searchContainer.contains(e.target)) {
-            // Collapse search
-            searchExpanded = false;
-            toggleBtn.classList.remove('active');
-            toggleBtn.style.display = 'flex';
-            searchBarContainer.classList.remove('expanded');
-            helpBox.classList.remove('visible');
-            
-            // Clear search input
-            document.getElementById('search-input').value = '';
-            clearSearch();
-        }
-    });
-    
-    // Placeholder search functions - replace these with your actual search logic
-    function performSearch(searchText) {
-        console.log('Searching for:', searchText);
-        // TODO: Implement your search functionality here
-        // This function will receive the search text and should filter/highlight results
-    }
-    
-    function clearSearch() {
-        console.log('Clearing search results');
-        // TODO: Implement clearing search results here
-        // This should reset the view to show all items without search filtering
-    }
+    // Initialize search functionality
+    initializeSearchFunctionality();
 
     // Sort dropdown handler
     document.getElementById('sort-dropdown').onchange = function(e) {
