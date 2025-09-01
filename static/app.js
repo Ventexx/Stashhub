@@ -1688,21 +1688,9 @@ function toggleSelectionMode() {
     if (selectionMode) {
         btn.textContent = '✗ Cancel';
         btn.classList.add('active');
-        // Hide path bar and show batch bar as replacement
-        if (pathBar) pathBar.style.display = 'none';
-        if (batchBar) {
-            batchBar.classList.add('path-replacement');
-            batchBar.classList.add('show');
-        }
     } else {
         btn.textContent = '✓ Select';
         btn.classList.remove('active');
-        // Show path bar and remove replacement styling from batch bar
-        if (pathBar) pathBar.style.display = 'flex';
-        if (batchBar) {
-            batchBar.classList.remove('path-replacement');
-            batchBar.classList.remove('show');
-        }
         clearSelection();
     }
     
@@ -3843,7 +3831,6 @@ document.addEventListener('DOMContentLoaded', async function() {
             const newFolder = {
                 name: name.trim(),
                 cover: "",
-                color: "#28a745",
                 folders: [],
                 entries: []
             };
@@ -3861,7 +3848,6 @@ document.addEventListener('DOMContentLoaded', async function() {
             const newEntry = {
                 name: name.trim(),
                 cover: "",
-                color: "#6c757d",
                 links: []
             };
             applyDefaultSettings(newEntry, 'entry');
