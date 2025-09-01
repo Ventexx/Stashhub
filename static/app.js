@@ -185,7 +185,9 @@ function initializeSettings() {
     if (!data.settings) {
         data.settings = {
             defaultFolderAspectRatio: '8:3',
+            defaultFolderColor: '#28a745',
             defaultEntryAspectRatio: '8:3',
+            defaultEntryColor: '#6c757d',
             defaultFolderWhiteText: false,
             linksExpandedByDefault: true,
             noteExpandedByDefault: true,
@@ -201,12 +203,18 @@ function applyDefaultSettings(item, type) {
         if (!item.aspectRatio) {
             item.aspectRatio = data.settings.defaultFolderAspectRatio;
         }
+        if (!item.color) {
+            item.color = data.settings.defaultFolderColor;
+        }
         if (item.whiteText === undefined) {
             item.whiteText = data.settings.defaultFolderWhiteText;
         }
     } else if (type === 'entry') {
         if (!item.aspectRatio) {
             item.aspectRatio = data.settings.defaultEntryAspectRatio;
+        }
+        if (!item.color) {
+            item.color = data.settings.defaultEntryColor;
         }
     }
 }
@@ -1750,6 +1758,13 @@ function performMoveOperation(selectedDestination) {
         return false;
     }
     
+    // Check if any folder is being moved into itself
+    const validation = isMovingFolderIntoItself(selectedItems, selectedDestination);
+    if (validation.isInvalid) {
+        showErrorMessage(`Cannot move folder "${validation.folderName}" into itself or its subfolders. Please choose a different destination.`, 2);
+        return false;
+    }
+    
     // Get source and destination folders
     const sourceFolder = getCurrentFolder();
     let destinationFolder = data;
@@ -1818,6 +1833,34 @@ function collectAllLinksFromFolder(folder, linkArray) {
             collectAllLinksFromFolder(subfolder, linkArray);
         });
     }
+}
+
+function isMovingFolderIntoItself(selectedItems, destinationPath) {
+    const currentFolder = getCurrentFolder();
+    
+    for (let itemId of selectedItems) {
+        const [type, index] = itemId.split(':');
+        if (type === 'folder') {
+            const folderIndex = parseInt(index);
+            // Get the path to the folder being moved
+            const sourceFolderPath = [...currentPath, folderIndex];
+            
+            // Check if destination path starts with source folder path
+            if (destinationPath.length >= sourceFolderPath.length) {
+                const isSubpath = sourceFolderPath.every((pathIndex, i) => 
+                    destinationPath[i] === pathIndex
+                );
+                if (isSubpath) {
+                    return {
+                        isInvalid: true,
+                        folderName: currentFolder.folders[folderIndex].name
+                    };
+                }
+            }
+        }
+    }
+    
+    return { isInvalid: false };
 }
 
 function deleteSelectedItemsWithConfirmation() {
@@ -1911,6 +1954,13 @@ function setupMainAreaDragDrop(contentDiv) {
         const urls = e.dataTransfer.getData('text/uri-list').split('\n').filter(url => url.trim());
         const textData = e.dataTransfer.getData('text/plain');
 
+        // Handle JSON files first
+        const jsonFiles = files.filter(file => file.name.toLowerCase().endsWith('.json'));
+        if (jsonFiles.length > 0) {
+            handleJsonDrop(jsonFiles[0]);
+            return; // Exit early, don't process other file types
+        }
+
         // Handle image files - placeholder functionality
         const imageFiles = files.filter(file => isImageFile(file));
         imageFiles.forEach(file => {
@@ -1947,6 +1997,82 @@ function setupMainAreaDragDrop(contentDiv) {
             }
         }
     });
+}
+
+function handleJsonDrop(jsonFile) {
+    const reader = new FileReader();
+    reader.onload = async function(e) {
+        try {
+            const jsonData = JSON.parse(e.target.result);
+            
+            // Basic validation - reusing existing validation logic
+            if (!jsonData || typeof jsonData !== 'object') {
+                showErrorMessage('Invalid JSON structure', 2);
+                return;
+            }
+            
+            // Get the file path - this is where the local path handling happens
+            let filePath;
+            if (jsonFile.path) {
+                // Electron/desktop environment - we have the full path
+                filePath = jsonFile.path;
+                showErrorMessage(`JSON file loaded from: ${filePath}`, 1);
+            } else {
+                // Web environment - we can't get the actual file path
+                // We'll need to save it to a default location and inform the user
+                filePath = `./imported_${Date.now()}_${jsonFile.name}`;
+                showErrorMessage('Cannot access local file path in web browser. File will be saved to profiles directory.', 1);
+            }
+            
+            // Save the JSON to the server with the determined path
+            const response = await fetch('/save-json-session', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    sessionPath: filePath,
+                    data: jsonData,
+                    fileName: jsonFile.name
+                })
+            });
+            
+            if (response.ok) {
+                // Create new profile or update existing one
+                const profileName = `imported_${Date.now()}`;
+                const newProfile = {
+                    name: profileName,
+                    value: filePath
+                };
+                
+                globalSettings.profiles.push(newProfile);
+                globalSettings.activeSession = profileName;
+                
+                await saveGlobalSettings();
+                
+                // Load the new session
+                data = jsonData;
+                dataLoaded = true;
+                currentPath = [];
+                clearSelection();
+                render();
+                
+                showErrorMessage(`JSON session loaded successfully! New profile "${profileName}" created and set as active.`, 1);
+            } else {
+                showErrorMessage('Failed to save JSON session to server', 2);
+            }
+            
+        } catch (error) {
+            showErrorMessage('Invalid JSON file format', 2);
+            console.error('JSON drop error:', error);
+        }
+    };
+    
+    reader.onerror = function() {
+        showErrorMessage('Failed to read JSON file', 2);
+    };
+    
+    reader.readAsText(jsonFile);
 }
 
 function setupFolderDragDrop(folderDiv, folderIdx) {
@@ -1998,6 +2124,12 @@ function setupFolderDragDrop(folderDiv, folderIdx) {
         const files = Array.from(e.dataTransfer.files);
         const urls = e.dataTransfer.getData('text/uri-list').split('\n').filter(url => url.trim());
         const textData = e.dataTransfer.getData('text/plain');
+
+        // Ignore JSON files on folders
+        const jsonFiles = files.filter(file => file.name.toLowerCase().endsWith('.json'));
+        if (jsonFiles.length > 0) {
+            return;
+        }
 
         // Handle image files - set as folder/entry cover
         const imageFiles = files.filter(file => isImageFile(file));
@@ -2095,6 +2227,12 @@ function setupEntryDragDrop(entryDiv, entryIdx) {
         const files = Array.from(e.dataTransfer.files);
         const urls = e.dataTransfer.getData('text/uri-list').split('\n').filter(url => url.trim());
         const textData = e.dataTransfer.getData('text/plain');
+
+        // Ignore JSON files on entries
+        const jsonFiles = files.filter(file => file.name.toLowerCase().endsWith('.json'));
+        if (jsonFiles.length > 0) {
+            return;
+        }
 
         // Handle image files - set as folder/entry cover
         const imageFiles = files.filter(file => isImageFile(file));
@@ -2801,6 +2939,17 @@ function showSettingsModal() {
                         </div>
                         
                         <div class="settings-form-group">
+                            <label class="settings-label">Default Folder Color:</label>
+                            <div class="settings-control">
+                                <div class="color-picker-group">
+                                    <input type="color" id="default-folder-color" class="color-picker-square" value="${data.settings.defaultFolderColor || '#28a745'}">
+                                    <input type="text" id="default-folder-color-hex" value="${data.settings.defaultFolderColor || '#28a745'}" placeholder="#28a745">
+                                    <button type="button" id="reset-default-folder-color-btn" class="reset-btn-square" title="Reset">🔄</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-form-group">
                             <label class="settings-label">Default Entry Aspect Ratio:</label>
                             <div class="settings-control">
                                 <select id="default-entry-aspect-ratio">
@@ -2809,6 +2958,17 @@ function showSettingsModal() {
                                     <option value="3:2" ${data.settings.defaultEntryAspectRatio === '3:2' ? 'selected' : ''}>3:2 (Photo)</option>
                                     <option value="8:3" ${data.settings.defaultEntryAspectRatio === '8:3' ? 'selected' : ''}>8:3 (Ultrawide)</option>
                                 </select>
+                            </div>
+                        </div>
+
+                        <div class="settings-form-group">
+                            <label class="settings-label">Default Entry Color:</label>
+                            <div class="settings-control">
+                                <div class="color-picker-group">
+                                    <input type="color" id="default-entry-color" class="color-picker-square" value="${data.settings.defaultEntryColor || '#6c757d'}">
+                                    <input type="text" id="default-entry-color-hex" value="${data.settings.defaultEntryColor || '#6c757d'}" placeholder="#6c757d">
+                                    <button type="button" id="reset-default-entry-color-btn" class="reset-btn-square" title="Reset">🔄</button>
+                                </div>
                             </div>
                         </div>
                         
@@ -2887,6 +3047,46 @@ function showSettingsModal() {
     modal.querySelector('.close-btn').onclick = () => modal.remove();
     modal.querySelector('#cancel-settings-btn').onclick = () => modal.remove();
     modal.querySelector('#add-profile-btn').onclick = createNewProfile;
+
+    // Color picker sync for default folder color
+    const defaultFolderColorPicker = modal.querySelector('#default-folder-color');
+    const defaultFolderHexInput = modal.querySelector('#default-folder-color-hex');
+
+    defaultFolderColorPicker.oninput = () => {
+        defaultFolderHexInput.value = defaultFolderColorPicker.value;
+    };
+
+    defaultFolderHexInput.oninput = () => {
+        if (/^#[0-9A-F]{6}$/i.test(defaultFolderHexInput.value)) {
+            defaultFolderColorPicker.value = defaultFolderHexInput.value;
+        }
+    };
+
+    modal.querySelector('#reset-default-folder-color-btn').onclick = () => {
+        const defaultColor = '#28a745';
+        defaultFolderColorPicker.value = defaultColor;
+        defaultFolderHexInput.value = defaultColor;
+    };
+
+    // Color picker sync for default entry color
+    const defaultEntryColorPicker = modal.querySelector('#default-entry-color');
+    const defaultEntryHexInput = modal.querySelector('#default-entry-color-hex');
+
+    defaultEntryColorPicker.oninput = () => {
+        defaultEntryHexInput.value = defaultEntryColorPicker.value;
+    };
+
+    defaultEntryHexInput.oninput = () => {
+        if (/^#[0-9A-F]{6}$/i.test(defaultEntryHexInput.value)) {
+            defaultEntryColorPicker.value = defaultEntryHexInput.value;
+        }
+    };
+
+    modal.querySelector('#reset-default-entry-color-btn').onclick = () => {
+        const defaultColor = '#6c757d';
+        defaultEntryColorPicker.value = defaultColor;
+        defaultEntryHexInput.value = defaultColor;
+    };
     
     let mouseDownOnModal = false;
     modal.addEventListener('mousedown', (e) => {
@@ -2905,9 +3105,10 @@ function showSettingsModal() {
     });
     
     modal.querySelector('#save-settings-btn').onclick = () => {
-        // Save settings
         data.settings.defaultFolderAspectRatio = modal.querySelector('#default-folder-aspect-ratio').value;
+        data.settings.defaultFolderColor = modal.querySelector('#default-folder-color-hex').value;
         data.settings.defaultEntryAspectRatio = modal.querySelector('#default-entry-aspect-ratio').value;
+        data.settings.defaultEntryColor = modal.querySelector('#default-entry-color-hex').value;
         data.settings.defaultFolderWhiteText = modal.querySelector('#default-folder-white-text').checked;
         data.settings.linksExpandedByDefault = modal.querySelector('#links-expanded-default').checked;
         data.settings.noteExpandedByDefault = modal.querySelector('#note-expanded-default').checked;
@@ -3323,7 +3524,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         document.getElementById('import-file').click();
     };
 
-document.getElementById('import-file').onchange = function() {
+    document.getElementById('import-file').onchange = function() {
         const file = this.files[0];
         if (file) {
             if (file.type !== 'application/json') {
@@ -3358,6 +3559,94 @@ document.getElementById('import-file').onchange = function() {
             reader.readAsText(file);
         }
     };
+
+    // Search functionality
+    let searchExpanded = false;
+    
+    document.getElementById('search-toggle-btn').onclick = () => {
+        const toggleBtn = document.getElementById('search-toggle-btn');
+        const searchContainer = document.getElementById('search-bar-container');
+        const searchInput = document.getElementById('search-input');
+        const helpBox = document.getElementById('search-help-box');
+        
+        if (!searchExpanded) {
+            // Expand search
+            searchExpanded = true;
+            toggleBtn.classList.add('active');
+            toggleBtn.style.display = 'none';
+            searchContainer.classList.add('expanded');
+            
+            // Focus on input after animation
+            setTimeout(() => {
+                searchInput.focus();
+                // Show help box if input is empty
+                if (!searchInput.value.trim()) {
+                    helpBox.classList.add('visible');
+                }
+            }, 100);
+        }
+    };
+    
+    // Handle search input events
+    document.getElementById('search-input').addEventListener('input', (e) => {
+        const searchText = e.target.value.trim();
+        const helpBox = document.getElementById('search-help-box');
+        
+        // Hide help box when user starts typing
+        if (searchText) {
+            helpBox.classList.remove('visible');
+            // TODO: Call search function here
+            performSearch(searchText);
+        } else {
+            helpBox.classList.add('visible');
+            // TODO: Clear search results
+            clearSearch();
+        }
+    });
+    
+    // Handle focus events for help box
+    document.getElementById('search-input').addEventListener('focus', () => {
+        const searchInput = document.getElementById('search-input');
+        const helpBox = document.getElementById('search-help-box');
+        
+        if (!searchInput.value.trim()) {
+            helpBox.classList.add('visible');
+        }
+    });
+    
+    // Handle blur events and clicking outside
+    document.addEventListener('click', (e) => {
+        const searchContainer = document.getElementById('search-container');
+        const toggleBtn = document.getElementById('search-toggle-btn');
+        const searchBarContainer = document.getElementById('search-bar-container');
+        const helpBox = document.getElementById('search-help-box');
+        
+        if (searchExpanded && !searchContainer.contains(e.target)) {
+            // Collapse search
+            searchExpanded = false;
+            toggleBtn.classList.remove('active');
+            toggleBtn.style.display = 'flex';
+            searchBarContainer.classList.remove('expanded');
+            helpBox.classList.remove('visible');
+            
+            // Clear search input
+            document.getElementById('search-input').value = '';
+            clearSearch();
+        }
+    });
+    
+    // Placeholder search functions - replace these with your actual search logic
+    function performSearch(searchText) {
+        console.log('Searching for:', searchText);
+        // TODO: Implement your search functionality here
+        // This function will receive the search text and should filter/highlight results
+    }
+    
+    function clearSearch() {
+        console.log('Clearing search results');
+        // TODO: Implement clearing search results here
+        // This should reset the view to show all items without search filtering
+    }
 
     // Sort dropdown handler
     document.getElementById('sort-dropdown').onchange = function(e) {
