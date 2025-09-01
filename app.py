@@ -128,5 +128,26 @@ def rename_profile_file():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/save-json-session', methods=['POST'])
+def save_json_session():
+    try:
+        request_data = request.get_json()
+        session_path = request_data.get('sessionPath')
+        data = request_data.get('data')
+        file_name = request_data.get('fileName', 'imported.json')
+        
+        # Create directory if it doesn't exist
+        directory = os.path.dirname(session_path)
+        if directory and not os.path.exists(directory):
+            os.makedirs(directory)
+        
+        # Save the JSON data to the specified path
+        with open(session_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        
+        return jsonify({"status": "success", "message": f"JSON session saved to {session_path}"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
     app.run(host='127.0.0.1', port=8780, debug=True)

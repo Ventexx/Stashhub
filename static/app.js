@@ -3386,7 +3386,7 @@ function showCreateJsonModal(profileName, onConfirm) {
             </div>
             <div class="modal-body">
                 <div class="form-group">
-                    <div style="margin-bottom: 20px;">This profile has no JSON assigned. Would you like to create a new empty JSON file for this profile?</div>
+                    <div style="margin-bottom: 20px;">This profile has no JSON assigned.<br>Would you like to create a new empty JSON file for this profile?</div>
                 </div>
                 <div class="modal-actions">
                     <button id="create-json-btn" type="button" class="btn-primary">Create New JSON</button>
@@ -3438,7 +3438,7 @@ function showDeleteProfileModal(profileName, onConfirm) {
             </div>
             <div class="modal-body">
                 <div class="form-group">
-                    <div style="margin-bottom: 20px;">Are you sure you want to delete profile "${profileName}"? This action cannot be undone.</div>
+                    <div style="margin-bottom: 20px;">Are you sure you want to delete profile "${profileName}"?<br>This action cannot be undone.</div>
                 </div>
                 <div class="modal-actions">
                     <button id="delete-profile-confirm-btn" type="button" class="btn-danger">Delete</button>
