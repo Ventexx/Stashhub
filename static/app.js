@@ -785,20 +785,22 @@ function createPathBar() {
     const pathBar = document.createElement('div');
     pathBar.className = 'path-bar';
 
-    // Left side - Path label, separator, and path buttons
+    // Left side - Path container
     const pathBarLeft = document.createElement('div');
     pathBarLeft.className = 'path-bar-left';
 
-    // Path label
+    const pathContainer = document.createElement('div');
+    pathContainer.className = 'path-container';
+
     const pathLabel = document.createElement('div');
     pathLabel.className = 'path-label';
     pathLabel.textContent = 'Path';
-    pathBarLeft.appendChild(pathLabel);
+    pathContainer.appendChild(pathLabel);
 
     // Main separator
     const mainSeparator = document.createElement('div');
     mainSeparator.className = 'path-separator-main';
-    pathBarLeft.appendChild(mainSeparator);
+    pathContainer.appendChild(mainSeparator);
 
     // Path buttons container
     const pathButtons = document.createElement('div');
@@ -850,7 +852,8 @@ function createPathBar() {
         }
     });
 
-    pathBarLeft.appendChild(pathButtons);
+    pathContainer.appendChild(pathButtons);
+    pathBarLeft.appendChild(pathContainer);
 
     // Right side - Navigation buttons
     const pathBarRight = document.createElement('div');
@@ -1174,6 +1177,7 @@ function createNewEntry(name, cover, links) {
     folder.entries.push(newEntry);
     autoSave();
     render();
+    refreshSearchIfActive();
 }
 
 function createEntryInFolder(folderIndex, link) {
@@ -1189,6 +1193,7 @@ function createEntryInFolder(folderIndex, link) {
     targetFolder.entries.push(newEntry);
     autoSave();
     render();
+    refreshSearchIfActive();
 }
 
 function addLinkToEntry(entryIndex, link) {
@@ -1201,6 +1206,7 @@ function addLinkToEntry(entryIndex, link) {
     
     autoSave();
     render();
+    refreshSearchIfActive();
 }
 
 function saveFolderChanges(modal, folderIdx) {
@@ -1276,6 +1282,7 @@ function saveFolderChanges(modal, folderIdx) {
     
     autoSave();
     render();
+    refreshSearchIfActive();
     modal.remove();
     
     if (changes.length > 0) {
@@ -1387,6 +1394,7 @@ function saveEntryChanges(modal, entryIdx) {
     
     autoSave();
     render();
+    refreshSearchIfActive();
     modal.remove();
     
     if (changes.length > 0) {
@@ -1486,6 +1494,7 @@ function setCoverImage(targetType, targetIndex, imageSource) {
     
     autoSave();
     render();
+    refreshSearchIfActive();
 }
 
 function applyAspectRatio(targetType, targetIndex, aspectRatio) {
@@ -1866,6 +1875,7 @@ function duplicateSelectedItems() {
     clearSelection();
     autoSave();
     render();
+    refreshSearchIfActive();
 }
 
 function performMoveOperation(selectedDestination) {
@@ -1926,6 +1936,7 @@ function performMoveOperation(selectedDestination) {
     clearSelection();
     autoSave();
     render();
+    refreshSearchIfActive();
     return true;
 }
 
@@ -2037,6 +2048,7 @@ function deleteSelectedItemsWithConfirmation() {
         clearSelection();
         autoSave();
         render();
+        refreshSearchIfActive();
     });
 }
 
@@ -2602,6 +2614,14 @@ function refreshSearchResults() {
     }
 }
 
+function refreshSearchIfActive() {
+    if (isSearchActive && searchResults && searchResults.searchTerm) {
+        const results = performSearchOperation(searchResults.searchTerm, getCurrentFolder(), [...currentPath]);
+        searchResults.results = results;
+        displaySearchResults(results, searchResults.searchTerm);
+    }
+}
+
 function performSearchOperation(searchText, folder, currentFolderPath) {
     const results = [];
     const searchQueries = parseSearchQuery(searchText);
@@ -2902,13 +2922,16 @@ function applySearchResultColors() {
             
             const folderName = folderElement.querySelector('.folder-name');
             const folderCount = folderElement.querySelector('.folder-count');
+            const searchResultPath = folderElement.querySelector('.search-result-path');
             
             if (whiteText) {
                 folderName.style.color = 'white';
                 folderCount.style.color = '#e0e0e0e0';
+                if (searchResultPath) searchResultPath.style.color = 'white';
             } else {
                 folderName.style.color = '#333';
                 folderCount.style.color = '#474747ff';
+                if (searchResultPath) searchResultPath.style.color = '#333';
             }
         }
     });
