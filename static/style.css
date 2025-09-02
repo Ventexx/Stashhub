@@ -31,7 +31,8 @@ header {
     align-items: center;
     justify-content: space-between;
     position: sticky;
-    z-index: 2;
+    top: 0;
+    z-index: 100;
 }
 header h1 { margin: 0; font-size: 24px; }
 
@@ -207,7 +208,14 @@ header button:hover { background: #666; }
 
 .search-help-content { color: #ccc; font-size: 12px; line-height: 1.4; }
 
-.search-results-header { background: #f8f9fa; padding: 15px 20px; border-bottom: 1px solid #dee2e6; position: sticky; }
+.search-results-header { 
+    background: #f8f9fa; 
+    padding: 15px 20px; 
+    border-bottom: 1px solid #dee2e6; 
+    position: sticky; 
+    top: 139px;
+    z-index: 98;
+}
 .search-results-info h3 { margin: 0 0 5px 0; color: #333; }
 .search-results-info p { margin: 0; color: #666; font-size: 14px; }
 .search-result-path { font-size: 12px; color: #666; margin-top: 5px; font-style: italic; }
@@ -219,7 +227,7 @@ header button:hover { background: #666; }
 
 /* Path Bar */
 .path-bar {
-    background: rgba(51, 51, 51, 0.3);
+    background: rgb(97, 97, 97, 0);
     padding: 10px 20px;
     display: flex;
     align-items: center;
@@ -230,7 +238,8 @@ header button:hover { background: #666; }
     border: none;
     border-radius: 0;
     position: sticky;
-    z-index: 1;
+    top: 89px;
+    z-index: 99;
 }
 
 .path-bar-left {

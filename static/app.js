@@ -1396,7 +1396,7 @@ function saveEntryChanges(modal, entryIdx) {
     }
 }
 
-function deleteFolderWithConfirmation(folderIdx, modal) {
+function deleteFolderWithConfirmation(folderIdx, onClose) {
     const currentFolder = getCurrentFolder();
     const targetFolder = currentFolder.folders[folderIdx];
     
@@ -1414,7 +1414,7 @@ function deleteFolderWithConfirmation(folderIdx, modal) {
         currentFolder.folders.splice(folderIdx, 1);
         autoSave();
         render();
-        modal.remove();
+        if (onClose) onClose();
         showErrorMessage(`Folder "${targetFolder.name}" deleted successfully`, 1);
     });
 }
@@ -2594,6 +2594,14 @@ function executeSearch(searchText) {
     displaySearchResults(results, trimmedSearch);
 }
 
+function refreshSearchResults() {
+    if (isSearchActive && searchResults && searchResults.searchTerm) {
+        const results = performSearchOperation(searchResults.searchTerm, getCurrentFolder(), [...currentPath]);
+        searchResults.results = results;
+        displaySearchResults(results, searchResults.searchTerm);
+    }
+}
+
 function performSearchOperation(searchText, folder, currentFolderPath) {
     const results = [];
     const searchQueries = parseSearchQuery(searchText);
@@ -2796,13 +2804,37 @@ function displaySearchResults(results, searchTerm) {
                     parentFolder = parentFolder.folders[result.path[i]];
                 }
                 const folderIdx = result.path[result.path.length - 1] || result.path.length;
-                showFolderEditModal(result.item, folderIdx);
+
+                const oldPath = [...currentPath];
+                const oldSearchState = { ...searchResults };
+                currentPath = [...result.path.slice(0, -1)];
+
+                showFolderEditModal(result.item, folderIdx, () => {
+                    // Restore path and search after modal closes
+                    currentPath = oldPath;
+                    if (oldSearchState && oldSearchState.searchTerm) {
+                        searchResults = oldSearchState;
+                        refreshSearchResults();
+                    }
+                });
             } else {
                 let entryFolder = data;
                 for (let i = 0; i < result.path.length; i++) {
                     entryFolder = entryFolder.folders[result.path[i]];
                 }
-                showEntryEditModal(result.item, result.entryIndex);
+
+                const oldPath = [...currentPath];
+                const oldSearchState = { ...searchResults };
+                currentPath = [...result.path.slice(0, -1)];
+
+                showEntryEditModal(result.item, result.entryIndex, () => {
+                    // Restore path and search after modal closes
+                    currentPath = oldPath;
+                    if (oldSearchState && oldSearchState.searchTerm) {
+                        searchResults = oldSearchState;
+                        refreshSearchResults();
+                    }
+                });
             }
         });
 
@@ -2894,11 +2926,20 @@ function applySearchResultColors() {
 
 function navigateToSearchResult(result) {
     if (result.type === 'folder') {
+        const currentSearchTerm = searchResults ? searchResults.searchTerm : null;
         navigateToPath(result.path);
+
+        // If we had a search active, keep search input value but clear results view
+        if (currentSearchTerm) {
+            const searchInput = document.getElementById('search-input');
+            if (searchInput) {
+                searchInput.value = currentSearchTerm;
+            }
+        }
     } else {
-        navigateToPath(result.path);
+        // The entry click will be handled by handleEntryClick
+        return;
     }
-    clearSearch();
 }
 
 function clearSearch() {
@@ -2980,7 +3021,7 @@ function formatTagsForDisplay(tags) {
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 // MODAL DIALOGS & USER INTERFACE
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-function showFolderEditModal(folder, folderIdx) {
+function showFolderEditModal(folder, folderIdx, onCloseCallback) {
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
     modal.innerHTML = `
@@ -3080,8 +3121,13 @@ function showFolderEditModal(folder, folderIdx) {
         }
     };
     
+    const closeModal = () => {
+        modal.remove();
+        if (onCloseCallback) onCloseCallback();
+    };
+
     // Event listeners
-    modal.querySelector('.close-btn').onclick = () => modal.remove();
+    modal.querySelector('.close-btn').onclick = () => closeModal();
     let mouseDownOnModal = false;
     modal.addEventListener('mousedown', (e) => {
         if (e.target === modal) {
@@ -3093,7 +3139,7 @@ function showFolderEditModal(folder, folderIdx) {
 
     modal.addEventListener('mouseup', (e) => {
         if (e.target === modal && mouseDownOnModal) {
-            modal.remove();
+            closeModal();
         }
         mouseDownOnModal = false;
     });
@@ -3141,18 +3187,25 @@ function showFolderEditModal(folder, folderIdx) {
     
         autoSave();
         render();
-        modal.remove();
+        closeModal()
         showErrorMessage('Folder duplicated successfully!', 1);
     };
 
     modal.querySelector('#delete-folder-btn').onclick = () => {
-        deleteFolderWithConfirmation(folderIdx, modal);
+        deleteFolderWithConfirmation(folderIdx, closeModal);
     };
     
-    setupModalEscapeKey(modal);
+    const handleEscKey = (e) => {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            closeModal();
+            document.removeEventListener('keydown', handleEscKey);
+        }
+    };
+    document.addEventListener('keydown', handleEscKey);
 }
 
-function showEntryEditModal(entryData, entryIdx) {
+function showEntryEditModal(entryData, entryIdx, onCloseCallback) {
     const currentFolder = getCurrentFolder();
     const actualEntry = currentFolder.entries[entryIdx];
     
@@ -3284,8 +3337,13 @@ function showEntryEditModal(entryData, entryIdx) {
         }
     };
     
+    const closeModal = () => {
+        modal.remove();
+        if (onCloseCallback) onCloseCallback();
+    };
+
     // Event listeners
-    modal.querySelector('.close-btn').onclick = () => modal.remove();
+    modal.querySelector('.close-btn').onclick = () => closeModal();
     let mouseDownOnModal = false;
     modal.addEventListener('mousedown', (e) => {
         if (e.target === modal) {
@@ -3297,7 +3355,7 @@ function showEntryEditModal(entryData, entryIdx) {
 
     modal.addEventListener('mouseup', (e) => {
         if (e.target === modal && mouseDownOnModal) {
-            modal.remove();
+            closeModal();
         }
         mouseDownOnModal = false;
     });
@@ -3366,7 +3424,7 @@ function showEntryEditModal(entryData, entryIdx) {
     
         autoSave();
         render();
-        modal.remove();
+        closeModal()
         showErrorMessage('Entry duplicated successfully!', 1);
     };
     
@@ -3375,10 +3433,17 @@ function showEntryEditModal(entryData, entryIdx) {
     };
     
     modal.querySelector('#delete-entry-btn').onclick = () => {
-        deleteEntryWithConfirmation(entryIdx, modal);
+        deleteEntryWithConfirmation(entryIdx, closeModal);
     };
     
-    setupModalEscapeKey(modal);
+    const handleEscKey = (e) => {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            closeModal();
+            document.removeEventListener('keydown', handleEscKey);
+        }
+    };
+    document.addEventListener('keydown', handleEscKey);
 }
 
 function showMoveModal() {
