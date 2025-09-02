@@ -2451,6 +2451,7 @@ function initializeSearchFunctionality() {
     searchToggleBtn.onclick = handleSearchToggle;
     searchInput.addEventListener('input', handleSearchInput);
     searchInput.addEventListener('focus', handleSearchFocus);
+    searchInput.addEventListener('keydown', handleSearchKeydown);
     
     document.addEventListener('click', handleSearchOutsideClick);
 }
@@ -2479,12 +2480,21 @@ function handleSearchToggle() {
 function handleSearchInput(e) {
     const searchText = e.target.value;
     const helpBox = document.getElementById('search-help-box');
+    const clearBtn = document.getElementById('search-clear-btn');
     
     if (searchText.trim()) {
         helpBox.classList.remove('visible');
+        if (clearBtn) {
+            clearBtn.style.display = 'block';
+        } else {
+            addSearchClearButton();
+        }
         performSearch(searchText);
     } else {
         helpBox.classList.add('visible');
+        if (clearBtn) {
+            clearBtn.style.display = 'none';
+        }
         clearSearch();
     }
 }
@@ -2517,6 +2527,45 @@ function handleSearchOutsideClick(e) {
     }
 }
 
+function handleSearchKeydown(e) {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        const searchText = e.target.value.trim();
+        if (searchText) {
+            // Clear existing timeout and search immediately
+            if (searchTimeout) {
+                clearTimeout(searchTimeout);
+            }
+            executeSearch(searchText);
+        }
+    }
+}
+
+function addSearchClearButton() {
+    const searchContainer = document.getElementById('search-bar-container');
+    const clearBtn = document.createElement('button');
+    clearBtn.id = 'search-clear-btn';
+    clearBtn.className = 'search-clear-btn';
+    clearBtn.innerHTML = '×';
+    clearBtn.title = 'Clear search';
+    clearBtn.onclick = clearSearchInput;
+    searchContainer.appendChild(clearBtn);
+}
+
+function clearSearchInput() {
+    const searchInput = document.getElementById('search-input');
+    const clearBtn = document.getElementById('search-clear-btn');
+    
+    searchInput.value = '';
+    if (clearBtn) {
+        clearBtn.style.display = 'none';
+    }
+    clearSearch();
+    
+    const helpBox = document.getElementById('search-help-box');
+    helpBox.classList.add('visible');
+}
+
 function performSearch(searchText) {
     if (searchTimeout) {
         clearTimeout(searchTimeout);
@@ -2524,7 +2573,7 @@ function performSearch(searchText) {
     
     searchTimeout = setTimeout(() => {
         executeSearch(searchText);
-    }, 3000);
+    }, 1000);
 }
 
 function executeSearch(searchText) {
@@ -2738,6 +2787,25 @@ function displaySearchResults(results, searchTerm) {
         }
         
         div.onclick = () => navigateToSearchResult(result);
+
+        div.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            if (result.type === 'folder') {
+                let parentFolder = data;
+                for (let i = 0; i < result.path.length - 1; i++) {
+                    parentFolder = parentFolder.folders[result.path[i]];
+                }
+                const folderIdx = result.path[result.path.length - 1] || result.path.length;
+                showFolderEditModal(result.item, folderIdx);
+            } else {
+                let entryFolder = data;
+                for (let i = 0; i < result.path.length; i++) {
+                    entryFolder = entryFolder.folders[result.path[i]];
+                }
+                showEntryEditModal(result.item, result.entryIndex);
+            }
+        });
+
         contentDiv.appendChild(div);
     });
     
