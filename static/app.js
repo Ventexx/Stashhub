@@ -1444,8 +1444,19 @@ function deleteEntryWithConfirmation(entryIdx, modal) {
     }], () => {
         currentFolder.entries.splice(entryIdx, 1);
         autoSave();
-        render();
-        modal.remove();
+        
+        // Close the edit modal first
+        if (modal && modal.remove) {
+            modal.remove();
+        }
+        
+        // Then refresh the view
+        if (isSearchActive && searchResults) {
+            refreshSearchResults();
+        } else {
+            render();
+        }
+        
         showErrorMessage(`Entry "${targetEntry.name}" deleted successfully`, 1);
     });
 }
@@ -1658,6 +1669,25 @@ function createEmptyJsonData() {
     };
 }
 
+function parseTagsFromInput(tagInput) {
+    if (!tagInput || !tagInput.trim()) {
+        return [];
+    }
+    
+    const tags = tagInput.split(';')
+        .map(tag => tag.trim())
+        .filter(tag => tag.length > 0);
+    
+    return tags;
+}
+
+function formatTagsForDisplay(tags) {
+    if (!tags || tags.length === 0) {
+        return '';
+    }
+    return tags.join('; ') + (tags.length > 0 ? ';' : '');
+}
+
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 // BATCH OPERATIONS & INTERACTIONS
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -1719,8 +1749,6 @@ function createBatchActionsBar() {
 function toggleSelectionMode() {
     selectionMode = !selectionMode;
     const btn = document.getElementById('selection-toggle-btn');
-    const pathBar = document.querySelector('.path-bar');
-    const batchBar = document.getElementById('batch-actions-bar');
     
     if (selectionMode) {
         btn.textContent = '✗ Cancel';
@@ -1731,7 +1759,12 @@ function toggleSelectionMode() {
         clearSelection();
     }
     
-    render();
+    // Maintain search state when toggling selection
+    if (isSearchActive && searchResults) {
+        refreshSearchResults();
+    } else {
+        render();
+    }
 }
 
 function toggleSelection(itemId, element) {
@@ -1751,17 +1784,29 @@ function toggleSelection(itemId, element) {
 }
 
 function selectAllItems() {
-    const folder = getCurrentFolder();
+    if (isSearchActive && searchResults) {
+        // Select all search results
+        searchResults.results.forEach((result, index) => {
+            selectedItems.add(`${result.type}:${index}`);
+        });
+    } else {
+        // Select all items in current folder
+        const folder = getCurrentFolder();
+        
+        folder.folders.forEach((_, idx) => {
+            selectedItems.add(`folder:${idx}`);
+        });
+        
+        folder.entries.forEach((_, idx) => {
+            selectedItems.add(`entry:${idx}`);
+        });
+    }
     
-    folder.folders.forEach((_, idx) => {
-        selectedItems.add(`folder:${idx}`);
-    });
-    
-    folder.entries.forEach((_, idx) => {
-        selectedItems.add(`entry:${idx}`);
-    });
-    
-    render();
+    if (isSearchActive && searchResults) {
+        refreshSearchResults();
+    } else {
+        render();
+    }
 }
 
 function clearSelection() {
@@ -2629,6 +2674,53 @@ function performSearchOperation(searchText, folder, currentFolderPath) {
     return results;
 }
 
+function toggleSearchResultSelection(itemId, element) {
+    if (selectedItems.has(itemId)) {
+        selectedItems.delete(itemId);
+        element.classList.remove('selected');
+        const checkbox = element.querySelector('.selection-checkbox');
+        if (checkbox) checkbox.checked = false;
+    } else {
+        selectedItems.add(itemId);
+        element.classList.add('selected');
+        const checkbox = element.querySelector('.selection-checkbox');
+        if (checkbox) checkbox.checked = true;
+    }
+    
+    updateBatchActionsBar();
+}
+
+function setupSearchResultDragDrop(contentDiv) {
+    let dragCounter = 0;
+
+    contentDiv.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        dragCounter++;
+        contentDiv.classList.add('drag-over');
+    });
+
+    contentDiv.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+    });
+
+    contentDiv.addEventListener('dragleave', (e) => {
+        dragCounter--;
+        if (dragCounter === 0) {
+            contentDiv.classList.remove('drag-over');
+        }
+    });
+
+    contentDiv.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dragCounter = 0;
+        contentDiv.classList.remove('drag-over');
+
+        // For search results, we don't handle drops
+        showErrorMessage('Drag and drop not available in search results', 1);
+    });
+}
+
 function parseSearchQuery(searchText) {
     const queries = [];
     
@@ -2781,24 +2873,65 @@ function displaySearchResults(results, searchTerm) {
             <h3>Search Results for: "${searchTerm}"</h3>
             <p>Found ${results.length} result${results.length === 1 ? '' : 's'}</p>
         </div>
+        <div class="search-nav-buttons">
+            <button class="nav-button" id="search-up-btn" title="Go to parent folder">↑</button>
+            <button class="nav-button" id="search-back-btn" title="Go back">←</button>
+            <button class="nav-button" id="search-forward-btn" title="Go forward">→</button>
+        </div>
     `;
     mainView.appendChild(searchHeader);
+
+    // Setup navigation buttons
+    const upBtn = searchHeader.querySelector('#search-up-btn');
+    const backBtn = searchHeader.querySelector('#search-back-btn');
+    const forwardBtn = searchHeader.querySelector('#search-forward-btn');
+
+    upBtn.onclick = () => navigateUp();
+    backBtn.onclick = () => navigateBack();
+    forwardBtn.onclick = () => navigateForward();
+
+    // Update button states
+    if (currentPath.length === 0) {
+        upBtn.classList.add('disabled');
+    }
+    if (historyIndex <= 0) {
+        backBtn.classList.add('disabled');
+    }
+    if (historyIndex >= navigationHistory.length - 1) {
+        forwardBtn.classList.add('disabled');
+    }
     
     const contentWrapper = document.createElement('div');
     contentWrapper.style.padding = '20px';
     
+    // Create and append batch actions bar
+    const batchBar = createBatchActionsBar();
+    contentWrapper.appendChild(batchBar);
+    
     const contentDiv = document.createElement('div');
     contentDiv.className = 'content-container search-results';
+
+    setupSearchResultDragDrop(contentDiv);
     
     const sortedResults = sortSearchResults(results, currentSort);
     
-    sortedResults.forEach((result) => {
+    sortedResults.forEach((result, displayIndex) => {
         const div = document.createElement('div');
         div.className = result.type === 'folder' ? 'folder search-result' : 'entry search-result';
+        
+        // Add selection mode support
+        if (selectionMode) {
+            div.classList.add('selection-mode');
+            const itemId = `${result.type}:${displayIndex}`;
+            if (selectedItems.has(itemId)) {
+                div.classList.add('selected');
+            }
+        }
         
         if (result.type === 'folder') {
             const totalEntries = getTotalEntries(result.item);
             div.innerHTML = `
+                ${selectionMode ? `<input type="checkbox" class="selection-checkbox" ${selectedItems.has(`folder:${displayIndex}`) ? 'checked' : ''}>` : ''}
                 <img src="/static/images/folder.png" alt="Cover" title="Default folder icon">
                 <div class="folder-name">📁 ${result.item.name}</div>
                 <div class="folder-count">${totalEntries} entries</div>
@@ -2807,6 +2940,7 @@ function displaySearchResults(results, searchTerm) {
         } else {
             const linksCount = getLinksCount(result.item);
             div.innerHTML = `
+                ${selectionMode ? `<input type="checkbox" class="selection-checkbox" ${selectedItems.has(`entry:${displayIndex}`) ? 'checked' : ''}>` : ''}
                 <img src="/static/images/entry.png" alt="Cover" title="Default entry icon">
                 <div class="entry-title">${result.item.name}</div>
                 <div class="entry-links-count">${linksCount} links</div>
@@ -2814,44 +2948,78 @@ function displaySearchResults(results, searchTerm) {
             `;
         }
         
-        div.onclick = () => navigateToSearchResult(result);
+        // Add selection checkbox functionality
+        if (selectionMode) {
+            const checkbox = div.querySelector('.selection-checkbox');
+            checkbox.onclick = (e) => {
+                e.stopPropagation();
+                const itemId = `${result.type}:${displayIndex}`;
+                toggleSearchResultSelection(itemId, div);
+            };
+        }
+        
+        div.onclick = (e) => {
+            if (e.defaultPrevented) return;
+            if (selectionMode) {
+                const itemId = `${result.type}:${displayIndex}`;
+                toggleSearchResultSelection(itemId, div);
+            } else {
+                if (result.type === 'entry') {
+                    // Handle entry click directly during search
+                    const originalPath = [...currentPath];
+                    currentPath = [...result.path];
+                    handleEntryClick(result.item, result.entryIndex);
+                    currentPath = originalPath; // Restore path immediately
+                } else {
+                    navigateToSearchResult(result);
+                }
+            }
+        };
 
         div.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             if (result.type === 'folder') {
-                let parentFolder = data;
-                for (let i = 0; i < result.path.length - 1; i++) {
-                    parentFolder = parentFolder.folders[result.path[i]];
-                }
-                const folderIdx = result.path[result.path.length - 1] || result.path.length;
-
-                const oldPath = [...currentPath];
-                const oldSearchState = { ...searchResults };
+                // Store current search state
+                const currentSearchState = {
+                    isActive: isSearchActive,
+                    results: searchResults,
+                    currentPath: [...currentPath]
+                };
+                
+                // Temporarily set path for the modal operations
+                const originalPath = [...currentPath];
                 currentPath = [...result.path.slice(0, -1)];
-
+                
+                // Get the folder index within its parent
+                const folderIdx = result.path[result.path.length - 1];
+                
                 showFolderEditModal(result.item, folderIdx, () => {
-                    // Restore path and search after modal closes
-                    currentPath = oldPath;
-                    if (oldSearchState && oldSearchState.searchTerm) {
-                        searchResults = oldSearchState;
+                    // Restore search state after modal closes
+                    currentPath = originalPath;
+                    if (currentSearchState.isActive && currentSearchState.results) {
+                        isSearchActive = currentSearchState.isActive;
+                        searchResults = currentSearchState.results;
                         refreshSearchResults();
                     }
                 });
             } else {
-                let entryFolder = data;
-                for (let i = 0; i < result.path.length; i++) {
-                    entryFolder = entryFolder.folders[result.path[i]];
-                }
-
-                const oldPath = [...currentPath];
-                const oldSearchState = { ...searchResults };
-                currentPath = [...result.path.slice(0, -1)];
-
+                // Store current search state
+                const currentSearchState = {
+                    isActive: isSearchActive,
+                    results: searchResults,
+                    currentPath: [...currentPath]
+                };
+                
+                // Temporarily set path for the modal operations
+                const originalPath = [...currentPath];
+                currentPath = [...result.path];
+                
                 showEntryEditModal(result.item, result.entryIndex, () => {
-                    // Restore path and search after modal closes
-                    currentPath = oldPath;
-                    if (oldSearchState && oldSearchState.searchTerm) {
-                        searchResults = oldSearchState;
+                    // Restore search state after modal closes
+                    currentPath = originalPath;
+                    if (currentSearchState.isActive && currentSearchState.results) {
+                        isSearchActive = currentSearchState.isActive;
+                        searchResults = currentSearchState.results;
                         refreshSearchResults();
                     }
                 });
@@ -2870,6 +3038,9 @@ function displaySearchResults(results, searchTerm) {
     
     contentWrapper.appendChild(contentDiv);
     mainView.appendChild(contentWrapper);
+    
+    // Update batch actions bar
+    updateBatchActionsBar();
     
     setTimeout(() => applySearchResultColors(), 0);
 }
@@ -2974,6 +3145,9 @@ function clearSearch() {
         searchTimeout = null;
     }
     
+    // Clear selection when exiting search
+    selectedItems.clear();
+    
     render();
 }
 
@@ -2990,55 +3164,6 @@ function addSearchToHistory(searchTerm) {
     
     navigationHistory.push(searchState);
     historyIndex = navigationHistory.length - 1;
-}
-
-function parseTagsFromInput(tagInput) {
-    if (!tagInput || !tagInput.trim()) {
-        return [];
-    }
-    
-    const tags = tagInput.split(';')
-        .map(tag => tag.trim())
-        .filter(tag => tag.length > 0);
-    
-    return tags;
-}
-
-function validateTagInput(tagInput) {
-    if (!tagInput || !tagInput.trim()) {
-        return { valid: true, tags: [] };
-    }
-    
-    // Check for proper semicolon usage
-    const trimmedInput = tagInput.trim();
-    
-    // Parse tags
-    const tags = parseTagsFromInput(trimmedInput);
-    
-    // Validate each tag
-    for (let tag of tags) {
-        if (tag.length === 0) {
-            return { 
-                valid: false, 
-                error: 'Empty tags are not allowed. Remove extra semicolons or add content between them.' 
-            };
-        }
-        if (tag.length > 50) {
-            return { 
-                valid: false, 
-                error: `Tag "${tag}" is too long. Maximum length is 50 characters.` 
-            };
-        }
-    }
-    
-    return { valid: true, tags: tags };
-}
-
-function formatTagsForDisplay(tags) {
-    if (!tags || tags.length === 0) {
-        return '';
-    }
-    return tags.join('; ') + (tags.length > 0 ? ';' : '');
 }
 
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -4031,9 +4156,15 @@ function showCreateFolderModal() {
         applyDefaultSettings(newFolder, 'folder');
         folder.folders.push(newFolder);
         autoSave();
-        render();
         modal.remove();
         showErrorMessage(`Folder "${name}" created successfully!`, 1);
+
+        // Refresh search if active, otherwise render normally
+        if (isSearchActive && searchResults) {
+            refreshSearchResults();
+        } else {
+            render();
+        }
     };
     
     modal.querySelector('#create-folder-btn').onclick = createFolder;
@@ -4116,9 +4247,15 @@ function showCreateEntryModal() {
         applyDefaultSettings(newEntry, 'entry');
         folder.entries.push(newEntry);
         autoSave();
-        render();
         modal.remove();
         showErrorMessage(`Entry "${name}" created successfully!`, 1);
+
+        // Refresh search if active, otherwise render normally
+        if (isSearchActive && searchResults) {
+            refreshSearchResults();
+        } else {
+            render();
+        }
     };
     
     modal.querySelector('#create-entry-btn').onclick = createEntry;
@@ -4482,6 +4619,36 @@ function isImageFile(file) {
     return file && file.type && file.type.startsWith('image/');
 }
 
+function validateTagInput(tagInput) {
+    if (!tagInput || !tagInput.trim()) {
+        return { valid: true, tags: [] };
+    }
+    
+    // Check for proper semicolon usage
+    const trimmedInput = tagInput.trim();
+    
+    // Parse tags
+    const tags = parseTagsFromInput(trimmedInput);
+    
+    // Validate each tag
+    for (let tag of tags) {
+        if (tag.length === 0) {
+            return { 
+                valid: false, 
+                error: 'Empty tags are not allowed. Remove extra semicolons or add content between them.' 
+            };
+        }
+        if (tag.length > 50) {
+            return { 
+                valid: false, 
+                error: `Tag "${tag}" is too long. Maximum length is 50 characters.` 
+            };
+        }
+    }
+    
+    return { valid: true, tags: tags };
+}
+
 function initNotificationContainer() {
     if (!notificationContainer) {
         notificationContainer = document.createElement('div');
@@ -4664,7 +4831,12 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Sort dropdown handler
     document.getElementById('sort-dropdown').onchange = function(e) {
         currentSort = e.target.value;
-        render();
+        if (isSearchActive && searchResults) {
+            // Re-sort search results
+            refreshSearchResults();
+        } else {
+            render();
+        }
     };
 
     // Initial render

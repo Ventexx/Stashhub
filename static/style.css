@@ -4,7 +4,13 @@ body {
     background: #f4f4f4;
     margin: 0;
     padding: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
 }
+body::-webkit-scrollbar { display: none; }
+* { scrollbar-width: none; }
+html { scrollbar-width: none; -ms-overflow-style: none; }
+html::-webkit-scrollbar { display: none; }
 
 /* Custom Scrollbar */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -213,7 +219,6 @@ header button:hover { background: #666; }
     padding: 15px 20px; 
     border-bottom: 1px solid #dee2e6; 
     position: sticky; 
-    top: 60px;
     z-index: 98;
     margin-top: 0;
 }
@@ -224,8 +229,18 @@ header button:hover { background: #666; }
 .search-result .search-result-path { color: inherit; }
 #search-input { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+.search-results-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    background: #f8f9fa;
+    border-bottom: 1px solid #e9ecef;
+}
+.search-nav-buttons { display: flex; gap: 5px; }
+
 /* Main View */
-#main-view { padding: 0; }
+#main-view { padding: 0; overflow-x: hidden;}
 
 /* Path Bar */
 .path-bar {
@@ -240,7 +255,7 @@ header button:hover { background: #666; }
     border: none;
     border-radius: 0;
     position: sticky;
-    top: 89px;
+    top: 10px;
     z-index: 99;
     height: 45px;
 }
@@ -262,7 +277,8 @@ header button:hover { background: #666; }
     padding: 6px 8px;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     position: relative;
-    max-width: fit-content;
+    max-width: 75vw;
+    height: auto;
 }
 
 .path-container::before {
@@ -301,7 +317,15 @@ header button:hover { background: #666; }
     display: flex;
     align-items: center;
     gap: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    white-space: nowrap;
+    flex: 1;
+    max-width: calc(75vw - 120px);
 }
+.path-buttons::-webkit-scrollbar { display: none; }
 
 .path-button {
     background: transparent;
@@ -355,7 +379,11 @@ header button:hover { background: #666; }
     min-height: 300px;
     border-radius: 8px;
     transition: all 0.3s ease;
+    overflow-y: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
 }
+.content-container::-webkit-scrollbar { display: none; }
 .content-container.drag-over {
     background: rgba(0, 123, 255, 0.1);
     border: 2px dashed #007bff;
@@ -614,11 +642,20 @@ header button:hover { background: #666; }
 .modal-header {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
     padding: 20px;
     border-bottom: 1px solid #dee2e6;
+    position: relative;
 }
-.modal-header h3 { margin: 0; color: #333; }
+.modal-header h3 { 
+    margin: 0; 
+    color: #333; 
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    hyphens: auto;
+    padding-right: 50px;
+    line-height: 1.3;
+}
 
 .close-btn {
     background: none;
@@ -632,6 +669,10 @@ header button:hover { background: #666; }
     display: flex;
     align-items: center;
     justify-content: center;
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    flex-shrink: 0;
 }
 .close-btn:hover { color: #333; }
 
