@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_from_directory
 import json
 import os
 
@@ -148,6 +148,73 @@ def save_json_session():
         return jsonify({"status": "success", "message": f"JSON session saved to {session_path}"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/save-image', methods=['POST'])
+def save_image():
+    try:
+        import base64
+        from werkzeug.utils import secure_filename
+        
+        request_data = request.get_json()
+        image_data = request_data.get('imageData')  # base64 encoded
+        suggested_name = request_data.get('suggestedName', 'image')
+        
+        # Create IMG directory if it doesn't exist
+        img_dir = './IMG'
+        if not os.path.exists(img_dir):
+            os.makedirs(img_dir)
+        
+        # Extract file extension from base64 header
+        if ',' in image_data:
+            header, data = image_data.split(',', 1)
+            # Extract file type from header like "data:image/jpeg;base64"
+            if 'jpeg' in header or 'jpg' in header:
+                ext = '.jpg'
+            elif 'png' in header:
+                ext = '.png'
+            elif 'gif' in header:
+                ext = '.gif'
+            elif 'webp' in header:
+                ext = '.webp'
+            else:
+                ext = '.jpg'  # default
+        else:
+            data = image_data
+            ext = '.jpg'  # default
+        
+        # Clean the suggested name
+        clean_name = secure_filename(suggested_name.replace('/', '_').replace('\\', '_'))
+        base_filename = clean_name + ext
+        
+        # Find available filename
+        counter = 1
+        filename = base_filename
+        while os.path.exists(os.path.join(img_dir, filename)):
+            name_part = clean_name + f"_{counter}"
+            filename = name_part + ext
+            counter += 1
+        
+        # Save the image
+        file_path = os.path.join(img_dir, filename).replace('\\', '/')
+        with open(file_path, 'wb') as f:
+            f.write(base64.b64decode(data))
+        
+        return jsonify({
+            "status": "success", 
+            "path": file_path.replace('\\', '/'),
+            "filename": filename
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/IMG/<filename>')
+def serve_image(filename):
+    try:
+        img_dir = os.path.abspath('./IMG')
+        return send_from_directory(img_dir, filename)
+    except FileNotFoundError:
+        return jsonify({"error": "Image not found"}), 404
 
 if __name__ == '__main__':
     app.run(host='127.0.0.1', port=8780, debug=True)

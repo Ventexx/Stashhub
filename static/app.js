@@ -685,7 +685,7 @@ function render() {
         
         div.innerHTML = `
             ${selectionMode ? `<input type="checkbox" class="selection-checkbox" ${selectedItems.has(`folder:${originalIdx}`) ? 'checked' : ''}>` : ''}
-            <img src="/static/images/folder.png" alt="Cover" title="Default folder icon">
+            <img src="${f.cover || '/static/images/folder.png'}" alt="Cover" title="${f.cover ? 'Folder cover image' : 'Default folder icon'}" onerror="this.src='/static/images/folder.png'">
             <div class="folder-name">📁 ${f.name}</div>
             <div class="folder-count">${totalEntries} entries</div>
         `;
@@ -728,7 +728,7 @@ function render() {
         
         div.innerHTML = `
             ${selectionMode ? `<input type="checkbox" class="selection-checkbox" ${selectedItems.has(`entry:${originalIdx}`) ? 'checked' : ''}>` : ''}
-            <img src="/static/images/entry.png" alt="Cover" title="Default entry icon">
+            <img src="${e.cover || '/static/images/entry.png'}" alt="Cover" title="${e.cover ? 'Entry cover image' : 'Default entry icon'}" onerror="this.src='/static/images/entry.png'">
             <div class="entry-title">${e.name}</div>
             <div class="entry-links-count">${getLinksCount(e)} links</div>
         `;
@@ -1244,7 +1244,7 @@ function saveFolderChanges(modal, folderIdx) {
     }
     
     if (!isValidImageUrl(newCover)) {
-        showErrorMessage('Invalid cover image URL. Please use a valid URL starting with http://, https://, file://, or leave empty', 2);
+        showErrorMessage('Invalid cover image URL. Please use ./IMG/ path, file:// path, or leave empty', 2);
         modal.querySelector('#folder-cover').focus();
         return;
     }
@@ -1343,7 +1343,7 @@ function saveEntryChanges(modal, entryIdx) {
     }
     
     if (!isValidImageUrl(newCover)) {
-        showErrorMessage('Invalid cover image URL. Please use a valid URL starting with http://, https://, file://, or leave empty', 2);
+        showErrorMessage('Invalid cover image URL. Please use ./IMG/ path, file:// path, or leave empty', 2);
         modal.querySelector('#entry-cover').focus();
         return;
     }
@@ -1464,29 +1464,26 @@ function deleteEntryWithConfirmation(entryIdx, modal) {
 function setCoverImage(targetType, targetIndex, imageSource) {
     const folder = getCurrentFolder();
     
+    // Check if it's a web URL and block it
+    if (imageSource.startsWith('http://') || imageSource.startsWith('https://')) {
+        showErrorMessage('Web image URLs are not allowed. Please download the image and upload it locally instead.', 2);
+        return;
+    }
+    
     let finalImageSource = imageSource;
     let messageText = '';
     
     // Handle different types of image sources
-    if (imageSource.startsWith('blob:')) {
-        // For blob URLs, warn user and suggest alternatives
+    if (imageSource.startsWith('./IMG/')) {
+        // Local saved image
         finalImageSource = imageSource;
-        messageText = 'Warning: Uploaded image will only work in current session. Consider using image URLs for permanent storage.';
-    } else if (imageSource.startsWith('local-file://')) {
-        // Local file reference with metadata
-        finalImageSource = imageSource;
-        const fileName = getDisplayableImageSource(imageSource);
-        messageText = `Local file "${fileName}" referenced. Ensure file stays in same location.`;
+        messageText = 'Local image file saved successfully!';
     } else if (imageSource.startsWith('file://')) {
-        // Direct file:// URLs
+        // Direct file:// URLs (still allow these for manual entry)
         finalImageSource = imageSource;
         messageText = 'Local file path saved.';
-    } else if (imageSource.startsWith('http')) {
-        // Web URLs
-        finalImageSource = imageSource;
-        messageText = 'Web image URL saved.';
     } else {
-        // Unknown format
+        // Unknown format - allow but warn
         finalImageSource = imageSource;
         messageText = 'Image source saved.';
     }
@@ -2174,13 +2171,43 @@ function setupMainAreaDragDrop(contentDiv) {
             return; // Exit early, don't process other file types
         }
 
-        // Handle image files - placeholder functionality
+        // Handle image files
         const imageFiles = files.filter(file => isImageFile(file));
-        imageFiles.forEach(file => {
-            const fileName = file.name;
+        imageFiles.forEach(async file => {
+            const fileName = file.name.replace(/\.[^/.]+$/, "");
             const newEntryName = `Image: ${fileName}`;
-            createNewEntry(newEntryName, '', []);
-            showErrorMessage('Image functionality will be implemented in a future update. Entry created without cover.', 1);
+    
+            // Convert to base64 and save
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                const base64Data = e.target.result;
+        
+                try {
+                    const response = await fetch('/save-image', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            imageData: base64Data,
+                            suggestedName: fileName
+                        })
+                    });
+            
+                    if (response.ok) {
+                        const result = await response.json();
+                        createNewEntry(newEntryName, '', [], result.path);
+                        showErrorMessage(`Image saved and entry created: "${result.filename}"`, 1);
+                    } else {
+                        createNewEntry(newEntryName, '', []);
+                        showErrorMessage('Failed to save image. Entry created without cover.', 2);
+                    }
+                } catch (error) {
+                    createNewEntry(newEntryName, '', []);
+                    showErrorMessage('Error processing image. Entry created without cover.', 2);
+                }
+            };
+            reader.readAsDataURL(file);
         });
 
         // Handle URLs
@@ -2188,24 +2215,16 @@ function setupMainAreaDragDrop(contentDiv) {
             urls.forEach(url => {
                 if (url.trim()) {
                     if (isImageUrl(url)) {
-                        // Image URL - create new entry with placeholder
-                        const newEntryName = `Image from ${extractDomainFromUrl(url)}`;
-                        createNewEntry(newEntryName, '', [url]);
-                        showErrorMessage('Image functionality will be implemented in a future update. Entry created without cover.', 1);
+                        showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
                     } else {
-                        // Regular link - create new entry with link
                         createNewEntry(`Link from ${extractDomainFromUrl(url)}`, '', [url]);
                     }
                 }
             });
         } else if (textData && isUrl(textData)) {
             if (isImageUrl(textData)) {
-                // Image URL - create new entry with placeholder
-                const newEntryName = `Image from ${extractDomainFromUrl(textData)}`;
-                createNewEntry(newEntryName, '', [textData]);
-                showErrorMessage('Image functionality will be implemented in a future update. Entry created without cover.', 1);
+                showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
             } else {
-                // Regular link - create new entry with link
                 createNewEntry(`Link from ${extractDomainFromUrl(textData)}`, '', [textData]);
             }
         }
@@ -2344,22 +2363,47 @@ function setupFolderDragDrop(folderDiv, folderIdx) {
             return;
         }
 
-        // Handle image files - set as folder/entry cover
+        // Handle image files - save and set as folder cover
         const imageFiles = files.filter(file => isImageFile(file));
         if (imageFiles.length > 0) {
             const file = imageFiles[0];
-            const fileName = file.name;
-            const fileSize = Math.round(file.size / 1024);
-            const fileType = file.type;
-            const customFileReference = `local-file://${fileName}|${fileSize}KB|${fileType}|${Date.now()}`;
-            setCoverImage('entry', entryIdx, customFileReference);
+            const folder = getCurrentFolder();
+            const folderName = folder.folders[folderIdx].name || 'folder';
+    
+            // Convert to base64 and save
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                const base64Data = e.target.result;
+        
+                try {
+                    const response = await fetch('/save-image', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            imageData: base64Data,
+                            suggestedName: folderName
+                        })
+                    });
+            
+                    if (response.ok) {
+                        const result = await response.json();
+                        setCoverImage('folder', folderIdx, result.path);
+                    } else {
+                        showErrorMessage('Failed to save dropped image', 2);
+                    }
+                } catch (error) {
+                    showErrorMessage('Error processing dropped image', 2);
+                }
+            };
+            reader.readAsDataURL(file);
         }
-        else if (urls.length > 0 && urls.some(url => isImageUrl(url))) { // Handle image URLs - placeholder functionality
-            const imageUrl = urls.find(url => isImageUrl(url));
-            setCoverImage('folder', folderIdx, imageUrl);
+        else if (urls.length > 0 && urls.some(url => isImageUrl(url))) {
+            showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
         }
         else if (textData && isImageUrl(textData)) {
-            setCoverImage('folder', folderIdx, textData);
+            showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
         }
         // Handle regular links - create new entry in folder
         else if (urls.length > 0) {
@@ -2447,32 +2491,59 @@ function setupEntryDragDrop(entryDiv, entryIdx) {
             return;
         }
 
-        // Handle image files - set as folder/entry cover
+        // Handle image files - save and set as cover
         const imageFiles = files.filter(file => isImageFile(file));
         if (imageFiles.length > 0) {
-            showErrorMessage('Image drag-and-drop functionality will be implemented in a future update. Use the edit menu to set covers.', 1);
+            const file = imageFiles[0];
+            const folder = getCurrentFolder();
+            const entryName = folder.entries[entryIdx].name || 'entry';
+    
+            // Convert to base64 and save
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                const base64Data = e.target.result;
+        
+                try {
+                    const response = await fetch('/save-image', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            imageData: base64Data,
+                            suggestedName: entryName
+                        })
+                    });
+            
+                    if (response.ok) {
+                        const result = await response.json();
+                        setCoverImage('entry', entryIdx, result.path);
+                    } else {
+                        showErrorMessage('Failed to save dropped image', 2);
+                    }
+                } catch (error) {
+                    showErrorMessage('Error processing dropped image', 2);
+                }
+            };
+            reader.readAsDataURL(file);
         }
         // Handle URLs
         else if (urls.length > 0) {
-            // Check for image URLs first
+            // Check for image URLs first and block them
             const imageUrls = urls.filter(url => isImageUrl(url));
             const regularUrls = urls.filter(url => !isImageUrl(url));
-    
-            // Set first image as cover if entry doesn't have one
+
             if (imageUrls.length > 0) {
-                showErrorMessage('Image URL drag-and-drop functionality will be implemented in a future update. Use the edit menu to set covers.', 1);
-                // Add image URLs as links too
-                imageUrls.forEach(url => addLinkToEntry(entryIdx, url));
+                showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
             }
-    
+
             // Add regular URLs as links
             regularUrls.forEach(url => addLinkToEntry(entryIdx, url));
         }
         // Handle single URL from text
         else if (textData && isUrl(textData)) {
             if (isImageUrl(textData)) {
-                showErrorMessage('Image URL drag-and-drop functionality will be implemented in a future update. Use the edit menu to set covers.', 1);
-                addLinkToEntry(entryIdx, textData);
+                showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
             } else {
                 addLinkToEntry(entryIdx, textData);
             }
@@ -3204,7 +3275,7 @@ function showFolderEditModal(folder, folderIdx, onCloseCallback) {
                         <label>Cover Image:</label>
                     </div>
                     <div id="cover-section" class="expandable-content">
-                        <input type="url" id="folder-cover" value="${folder.cover || ''}" placeholder="https://example.com/image.jpg">
+                        <input type="url" id="folder-cover" value="${folder.cover || ''}" placeholder="./IMG/image.jpg or file:// path only">
                         <div class="cover-preview" style="margin-top: 10px;">
                             ${folder.cover ? `<div style="font-size: 12px; color: #666; margin-bottom: 5px;">Current cover: ${getDisplayableImageSource(folder.cover)}</div>` : ''}
                         </div>
@@ -3312,7 +3383,12 @@ function showFolderEditModal(folder, folderIdx, onCloseCallback) {
         }
     };
 
-    modal.querySelector('#upload-folder-cover-btn').onclick = () => handleImageUpload('folder-cover');
+    modal.querySelector('#upload-folder-cover-btn').onclick = () => {
+        const folder = getCurrentFolder().folders[folderIdx];
+        const folderName = folder.name || 'folder';
+        handleImageUpload('folder-cover', 'folder', folderIdx, folderName);
+    };
+    
     modal.querySelector('#paste-folder-cover-btn').onclick = () => handlePasteUrl('folder-cover');
     
     // Aspect ratio change handler
@@ -3386,7 +3462,7 @@ function showEntryEditModal(entryData, entryIdx, onCloseCallback) {
                         <label>Cover Image:</label>
                     </div>
                     <div id="cover-section" class="expandable-content">
-                        <input type="url" id="entry-cover" value="${actualEntry.cover || ''}" placeholder="https://example.com/image.jpg">
+                        <input type="url" id="entry-cover" value="${actualEntry.cover || ''}" placeholder="./IMG/image.jpg or file:// path only">
                         <div class="cover-preview" style="margin-top: 10px;">
                             ${actualEntry.cover ? `<div style="font-size: 12px; color: #666; margin-bottom: 5px;">Current cover: ${getDisplayableImageSource(actualEntry.cover)}</div>` : ''}
                         </div>
@@ -3537,7 +3613,12 @@ function showEntryEditModal(entryData, entryIdx, onCloseCallback) {
         hexInput.value = defaultColor;
     };
 
-    modal.querySelector('#upload-entry-cover-btn').onclick = () => handleImageUpload('entry-cover');
+    modal.querySelector('#upload-entry-cover-btn').onclick = () => {
+        const entry = getCurrentFolder().entries[entryIdx];
+        const entryName = entry.name || 'entry';
+        handleImageUpload('entry-cover', 'entry', entryIdx, entryName);
+    };
+    
     modal.querySelector('#paste-entry-cover-btn').onclick = () => handlePasteUrl('entry-cover');
     
     modal.querySelector('#entry-aspect-ratio-select').onchange = (e) => {
@@ -4446,13 +4527,13 @@ function setupModalEscapeKey(modal) {
 // =-=-=-=-=-=-=-=-=-=-=
 // FILE HANDLING & MEDIA
 // =-=-=-=-=-=-=-=-=-=-=
-function handleImageUpload(inputId) {
+function handleImageUpload(inputId, targetType = null, targetIndex = null, suggestedName = '') {
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
     fileInput.accept = 'image/*';
     fileInput.style.display = 'none';
     
-    fileInput.addEventListener('change', function(e) {
+    fileInput.addEventListener('change', async function(e) {
         const file = e.target.files[0];
         if (file) {
             if (!isValidImageFile(file)) {
@@ -4460,18 +4541,53 @@ function handleImageUpload(inputId) {
                 return;
             }
             
-            // Try to get the file path information
-            const fileName = file.name;
-            const fileSize = Math.round(file.size / 1024); // Size in KB
-            const fileType = file.type;
-            
-            // For local files, we'll use a custom format that includes file info
-            const customFileReference = `local-file://${fileName}|${fileSize}KB|${fileType}|${Date.now()}`;
-            
-            const input = document.getElementById(inputId);
-            if (input) {
-                input.value = customFileReference;
-                showErrorMessage(`Local file "${fileName}" referenced successfully! Note: File must remain in same location.`, 1);
+            try {
+                // Convert file to base64
+                const reader = new FileReader();
+                reader.onload = async function(e) {
+                    const base64Data = e.target.result;
+                    
+                    // Use suggested name or file name
+                    const nameToUse = suggestedName || file.name.replace(/\.[^/.]+$/, "");
+                    
+                    // Save image to server
+                    const response = await fetch('/save-image', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            imageData: base64Data,
+                            suggestedName: nameToUse
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        const result = await response.json();
+                        const imagePath = result.path;
+                        
+                        // Update the input field or directly set the cover
+                        if (inputId) {
+                            const input = document.getElementById(inputId);
+                            if (input) {
+                                input.value = imagePath;
+                            }
+                        }
+                        
+                        if (targetType && targetIndex !== null) {
+                            setCoverImage(targetType, targetIndex, imagePath);
+                        }
+                        
+                        showErrorMessage(`Image saved as "${result.filename}" successfully!`, 1);
+                    } else {
+                        const error = await response.json();
+                        showErrorMessage('Failed to save image: ' + (error.error || 'Unknown error'), 2);
+                    }
+                };
+                reader.readAsDataURL(file);
+            } catch (error) {
+                showErrorMessage('Error processing image file', 2);
+                console.error('Image upload error:', error);
             }
         }
     });
@@ -4509,18 +4625,19 @@ function getDisplayableImageSource(imageSource) {
         return '';
     }
     
-    // Handle local file references
-    if (imageSource.startsWith('local-file://')) {
-        const parts = imageSource.replace('local-file://', '').split('|');
-        return parts[0]; // Return just the filename for display
+    // Handle local IMG folder images
+    if (imageSource.startsWith('./IMG/')) {
+        const filename = imageSource.split('/').pop();
+        return filename;
     }
     
-    // Handle blob URLs
-    if (imageSource.startsWith('blob:')) {
-        return '[Temporary Upload - Use URL instead]';
+    // Handle file:// URLs
+    if (imageSource.startsWith('file://')) {
+        const parts = imageSource.split('/');
+        return parts[parts.length - 1];
     }
     
-    // Return regular URLs as-is
+    // Return as-is for other formats
     return imageSource;
 }
 
@@ -4560,13 +4677,19 @@ function isValidHexColor(color) {
 function isValidImageUrl(url) {
     if (!url) return true; // Empty URL is valid
     
-    // Check if it's a local file reference
-    if (url.startsWith('local-file://')) return true;
+    // Block all web URLs for images
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+        return false;
+    }
     
-    // Check if it's a valid URL
+    // Normalize path separators and check if it's a local IMG path
+    const normalizedUrl = url.replace(/\\/g, '/');
+    if (normalizedUrl.startsWith('./IMG/')) return true;
+    
+    // Check if it's a file:// URL
     try {
         const urlObj = new URL(url);
-        return urlObj.protocol === 'http:' || urlObj.protocol === 'https:' || urlObj.protocol === 'file:';
+        return urlObj.protocol === 'file:';
     } catch {
         return false;
     }
