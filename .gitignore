@@ -51,7 +51,8 @@ temp/
 dist/
 build/
 
-# Ignore all JSON files (per request)
+# Ignore all Custom Files
 *.json
 /Profiles/
 /global_settings.json
+/IMG/

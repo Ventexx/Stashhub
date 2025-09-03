@@ -21,9 +21,95 @@ let searchResults = null;
 let searchHistory = [];
 let searchExpanded = false;
 
-// =-=-=-=-=-=-=-=-=-=-=-=-=-=-
-// CORE DATA & STATE MANAGEMENT
-// =-=-=-=-=-=-=-=-=-=-=-=-=-=-
+document.addEventListener('DOMContentLoaded', async function() {
+    // Initialize global settings and load current session
+    await loadDataFromServer();
+    initializeNavigationHistory();
+    
+    document.getElementById('new-folder-btn').onclick = showCreateFolderModal;
+    document.getElementById('new-entry-btn').onclick = showCreateEntryModal;
+
+    document.getElementById('selection-toggle-btn').onclick = toggleSelectionMode;
+    document.getElementById('help-btn').onclick = showHelpModal;
+    document.getElementById('settings-btn').onclick = showSettingsModal;
+
+    document.getElementById('export-btn').onclick = () => {
+        try {
+            const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'bookmarks.json';
+            a.click();
+            URL.revokeObjectURL(url);
+            showErrorMessage('Data exported successfully!', 1);
+        } catch (error) {
+            showErrorMessage('Failed to export data', 3);
+            console.error('Export error:', error);
+        }
+    };
+
+    document.getElementById('import-btn').onclick = () => {
+        document.getElementById('import-file').click();
+    };
+
+    document.getElementById('import-file').onchange = function() {
+        const file = this.files[0];
+        if (file) {
+            if (file.type !== 'application/json') {
+                showErrorMessage('Please select a valid JSON file', 2);
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const importedData = JSON.parse(e.target.result);
+                    
+                    // Basic validation
+                    if (!importedData || typeof importedData !== 'object') {
+                        showErrorMessage('Invalid JSON structure', 2);
+                        return;
+                    }
+                    
+                    // Create a temporary file path for the imported file
+                    const tempPath = `./imported_${Date.now()}_${file.name}`;
+                    
+                    // Show import choice modal with file path
+                    showImportChoiceModal(importedData, file.name, file.path || tempPath);
+                } catch (error) {
+                    showErrorMessage('Invalid JSON file format', 2);
+                    console.error('Import error:', error);
+                }
+            };
+            reader.onerror = function() {
+                showErrorMessage('Failed to read file', 3);
+            };
+            reader.readAsText(file);
+        }
+    };
+    
+    // Initialize search functionality
+    initializeSearchFunctionality();
+
+    // Sort dropdown handler
+    document.getElementById('sort-dropdown').onchange = function(e) {
+        currentSort = e.target.value;
+        if (isSearchActive && searchResults) {
+            // Re-sort search results
+            refreshSearchResults();
+        } else {
+            render();
+        }
+    };
+
+    // Initial render
+    render();
+});
+
+// =-=-=-=-=-=-=-=-=-=-=-=-=-
+// CORE DATA & INITIALIZATION
+// =-=-=-=-=-=-=-=-=-=-=-=-=-
 function getCurrentFolder() {
     let folder = data;
     for (let idx of currentPath) {
@@ -57,39 +143,392 @@ function getLinksCount(entry) {
     return entry.links.filter(link => link && link.trim()).length;
 }
 
-function sortFoldersAndEntries(folders, entries, sortType) {
-    const foldersCopy = [...folders];
-    const entriesCopy = [...entries];
-    
-    switch (sortType) {
-        case 'name-asc':
-            foldersCopy.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-            entriesCopy.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-            break;
-        case 'name-desc':
-            foldersCopy.sort((a, b) => (b.name || '').localeCompare(a.name || ''));
-            entriesCopy.sort((a, b) => (b.name || '').localeCompare(a.name || ''));
-            break;
-        case 'count-asc':
-            foldersCopy.sort((a, b) => getTotalEntries(a) - getTotalEntries(b));
-            entriesCopy.sort((a, b) => getLinksCount(a) - getLinksCount(b));
-            break;
-        case 'count-desc':
-            foldersCopy.sort((a, b) => getTotalEntries(b) - getTotalEntries(a));
-            entriesCopy.sort((a, b) => getLinksCount(b) - getLinksCount(a));
-            break;
-        default:
-            // No sorting
-            break;
-    }
-    
-    return { folders: foldersCopy, entries: entriesCopy };
-}
-
 function deepCloneItem(item) {
     return JSON.parse(JSON.stringify(item));
 }
 
+function collectAllLinksFromFolder(folder, linkArray) {
+    // Collect links from direct entries
+    if (folder.entries) {
+        folder.entries.forEach(entry => {
+            if (entry.links) {
+                entry.links.forEach(link => {
+                    if (link && link.trim() && isValidLinkUrl(link.trim())) {
+                        linkArray.push(link.trim());
+                    }
+                });
+            }
+        });
+    }
+    
+    // Recursively collect from subfolders
+    if (folder.folders) {
+        folder.folders.forEach(subfolder => {
+            collectAllLinksFromFolder(subfolder, linkArray);
+        });
+    }
+}
+
+function getPathDisplayString(path) {
+    if (path.length === 0) return 'Root';
+    
+    let pathString = 'Root';
+    let folder = data;
+    
+    for (let i = 0; i < path.length; i++) {
+        folder = folder.folders[path[i]];
+        pathString += ' / ' + folder.name;
+    }
+    
+    return pathString;
+}
+
+function extractDomainFromUrl(url) {
+    try {
+        return new URL(url).hostname;
+    } catch {
+        return 'Unknown';
+    }
+}
+
+function initNotificationContainer() {
+    if (!notificationContainer) {
+        notificationContainer = document.createElement('div');
+        notificationContainer.className = 'notification-container';
+        document.body.appendChild(notificationContainer);
+    }
+}
+
+async function createDefaultGlobalSettings() {
+    globalSettings = {
+        activeSession: "profile1",
+        profiles: [
+            { name: "profile1", value: "./data.json" }
+        ]
+    };
+    await saveGlobalSettings();
+}
+
+async function initializeGlobalSettings() {
+    try {
+        const response = await fetch('/load-global-settings');
+        if (response.ok) {
+            const serverGlobalSettings = await response.json();
+            globalSettings = serverGlobalSettings;
+        } else {
+            // Create default global settings file
+            await createDefaultGlobalSettings();
+        }
+    } catch (error) {
+        console.log('Creating default global settings file');
+        await createDefaultGlobalSettings();
+    }
+}
+
+// =-=-=-=-=-=-=-=-=-=-=-=-
+// SETTINGS & CONFIGURATION
+// =-=-=-=-=-=-=-=-=-=-=-=-
+function initializeSettings() {
+    if (!data.settings) {
+        data.settings = {
+            defaultFolderAspectRatio: '8:3',
+            defaultFolderColor: '#28a745',
+            defaultEntryAspectRatio: '8:3',
+            defaultEntryColor: '#6c757d',
+            defaultFolderWhiteText: false,
+            linksExpandedByDefault: true,
+            noteExpandedByDefault: true,
+            tagsExpandedByDefault: false,
+            entryClickAction: 'openLinks' // 'openLinks' or 'copyNote'
+        };
+    }
+}
+
+function applyDefaultSettings(item, type) {
+    initializeSettings();
+    
+    if (type === 'folder') {
+        if (!item.aspectRatio) {
+            item.aspectRatio = data.settings.defaultFolderAspectRatio;
+        }
+        if (!item.color) {
+            item.color = data.settings.defaultFolderColor;
+        }
+        if (item.whiteText === undefined) {
+            item.whiteText = data.settings.defaultFolderWhiteText;
+        }
+        if (!item.folderTags) {
+            item.folderTags = [];
+        }
+    } else if (type === 'entry') {
+        if (!item.aspectRatio) {
+            item.aspectRatio = data.settings.defaultEntryAspectRatio;
+        }
+        if (!item.color) {
+            item.color = data.settings.defaultEntryColor;
+        }
+        if (!item.entryTags) {
+            item.entryTags = [];
+        }
+    }
+}
+
+function applyAspectRatio(targetType, targetIndex, aspectRatio) {
+    const folder = getCurrentFolder();
+    
+    if (targetType === 'folder') {
+        folder.folders[targetIndex].aspectRatio = aspectRatio;
+    } else if (targetType === 'entry') {
+        folder.entries[targetIndex].aspectRatio = aspectRatio;
+    }
+    
+    autoSave();
+    render();
+}
+
+function applyAspectRatioStyles() {
+    const folders = document.querySelectorAll('.folder');
+    const entries = document.querySelectorAll('.entry');
+    const currentFolder = getCurrentFolder();
+    
+    const { folders: sortedFolders, entries: sortedEntries } = sortFoldersAndEntries(
+        currentFolder.folders || [], 
+        currentFolder.entries || [], 
+        currentSort
+    );
+    
+    folders.forEach((folderElement, index) => {
+        const originalIdx = currentFolder.folders.findIndex(original => original === sortedFolders[index]);
+        const folder = currentFolder.folders[originalIdx];
+        const aspectRatio = folder?.aspectRatio || '8:3';
+        const img = folderElement.querySelector('img');
+        if (img) {
+            setImageAspectRatio(img, aspectRatio);
+        }
+    });
+    
+    entries.forEach((entryElement, index) => {
+        const originalIdx = currentFolder.entries.findIndex(original => original === sortedEntries[index]);
+        const entry = currentFolder.entries[originalIdx];
+        const aspectRatio = entry?.aspectRatio || '8:3';
+        const img = entryElement.querySelector('img');
+        if (img) {
+            setImageAspectRatio(img, aspectRatio);
+        }
+    });
+}
+
+function applyDynamicColors() {
+    const folders = document.querySelectorAll('.folder');
+    const entries = document.querySelectorAll('.entry');
+    
+    folders.forEach((folderElement, index) => {
+        const currentFolder = getCurrentFolder();
+        const { folders: sortedFolders } = sortFoldersAndEntries(
+            currentFolder.folders || [], 
+            currentFolder.entries || [], 
+            currentSort
+        );
+        
+        // Get the original folder data using the display index
+        const originalIdx = currentFolder.folders.findIndex(original => original === sortedFolders[index]);
+        const folder = currentFolder.folders[originalIdx];
+        const color = folder?.color || '#28a745';
+        const whiteText = folder?.whiteText || false;
+        
+        // Create color variations for folder
+        const variations = createColorVariations(color, 'folder');
+        
+        folderElement.style.setProperty('--folder-bg-color', variations.gradient);
+        folderElement.style.setProperty('--folder-border-color', variations.border);
+        
+        // Apply text colors
+        const folderName = folderElement.querySelector('.folder-name');
+        const folderCount = folderElement.querySelector('.folder-count');
+        
+        if (whiteText) {
+            folderName.style.color = 'white';
+            folderCount.style.color = '#e0e0e0e0';
+        } else {
+            folderName.style.color = '#333';
+            folderCount.style.color = '#474747ff';
+        }
+    });
+    
+    entries.forEach((entryElement, index) => {
+        const currentFolder = getCurrentFolder();
+        const { entries: sortedEntries } = sortFoldersAndEntries(
+            currentFolder.folders || [], 
+            currentFolder.entries || [], 
+            currentSort
+        );
+        
+        // Get the original entry data using the display index
+        const originalIdx = currentFolder.entries.findIndex(original => original === sortedEntries[index]);
+        const entry = currentFolder.entries[originalIdx];
+        const color = entry?.color || '#6c757d';
+        
+        // Create color variations for entry
+        const variations = createColorVariations(color, 'entry');
+        
+        entryElement.style.setProperty('--entry-border-color', variations.gradient);
+    });
+}
+
+function adjustColorBrightness(color, percent) {
+    const num = parseInt(color.replace("#", ""), 16);
+    const amt = Math.round(2.55 * percent);
+    const R = (num >> 16) + amt;
+    const G = (num >> 8 & 0x00FF) + amt;
+    const B = (num & 0x0000FF) + amt;
+    
+    return "#" + (0x1000000 + (R < 255 ? R < 1 ? 0 : R : 255) * 0x10000 +
+        (G < 255 ? G < 1 ? 0 : G : 255) * 0x100 +
+        (B < 255 ? B < 1 ? 0 : B : 255)).toString(16).slice(1);
+}
+
+function createColorVariations(baseColor, type = 'folder') {
+    // Parse the hex color
+    const num = parseInt(baseColor.replace("#", ""), 16);
+    const r = (num >> 16) & 255;
+    const g = (num >> 8) & 255;
+    const b = num & 255;
+    
+    // Create variations based on type
+    if (type === 'folder') {
+        // For folders: create a gradient from lighter to darker
+        const lighterR = Math.min(255, r + 40);
+        const lighterG = Math.min(255, g + 40);
+        const lighterB = Math.min(255, b + 40);
+        
+        const darkerR = Math.max(0, r - 40);
+        const darkerG = Math.max(0, g - 40);
+        const darkerB = Math.max(0, b - 40);
+        
+        const lighterColor = `#${((1 << 24) + (lighterR << 16) + (lighterG << 8) + lighterB).toString(16).slice(1)}`;
+        const darkerColor = `#${((1 << 24) + (darkerR << 16) + (darkerG << 8) + darkerB).toString(16).slice(1)}`;
+        
+        return {
+            gradient: `linear-gradient(135deg, ${lighterColor}, ${baseColor}, ${darkerColor})`,
+            border: darkerColor
+        };
+    } else if (type === 'entry') {
+        // For entries: create border gradient variations
+        const lighterR = Math.min(255, r + 30);
+        const lighterG = Math.min(255, g + 30);
+        const lighterB = Math.min(255, b + 30);
+        
+        const darkerR = Math.max(0, r - 30);
+        const darkerG = Math.max(0, g - 30);
+        const darkerB = Math.max(0, b - 30);
+        
+        const lighterColor = `#${((1 << 24) + (lighterR << 16) + (lighterG << 8) + lighterB).toString(16).slice(1)}`;
+        const darkerColor = `#${((1 << 24) + (darkerR << 16) + (darkerG << 8) + darkerB).toString(16).slice(1)}`;
+        
+        return {
+            gradient: `linear-gradient(45deg, ${lighterColor}, ${darkerColor})`,
+            border: baseColor
+        };
+    }
+}
+
+function setCoverImage(targetType, targetIndex, imageSource) {
+    const folder = getCurrentFolder();
+    
+    // Check if it's a web URL and block it
+    if (imageSource.startsWith('http://') || imageSource.startsWith('https://')) {
+        showErrorMessage('Web image URLs are not allowed. Please download the image and upload it locally instead.', 2);
+        return;
+    }
+    
+    let finalImageSource = imageSource;
+    let messageText = '';
+    
+    // Handle different types of image sources
+    if (imageSource.startsWith('./IMG/')) {
+        // Local saved image
+        finalImageSource = imageSource;
+        messageText = 'Local image file saved successfully!';
+    } else if (imageSource.startsWith('file://')) {
+        // Direct file:// URLs (still allow these for manual entry)
+        finalImageSource = imageSource;
+        messageText = 'Local file path saved.';
+    } else {
+        // Unknown format - allow but warn
+        finalImageSource = imageSource;
+        messageText = 'Image source saved.';
+    }
+    
+    let updatedItem = null;
+    
+    if (targetType === 'folder') {
+        folder.folders[targetIndex].cover = finalImageSource;
+        updatedItem = folder.folders[targetIndex];
+        showErrorMessage(`Folder cover updated! ${messageText}`, 1);
+    } else if (targetType === 'entry') {
+        folder.entries[targetIndex].cover = finalImageSource;
+        updatedItem = folder.entries[targetIndex];
+        showErrorMessage(`Entry cover updated! ${messageText}`, 1);
+    }
+    
+    autoSave();
+    render();
+    refreshSearchIfActive();
+}
+
+function setImageAspectRatio(img, aspectRatio) {
+    const [width, height] = aspectRatio.split(':').map(Number);
+    const ratio = height / width;
+    
+    // Set container width to 160px and calculate height to maintain aspect ratio
+    const containerWidth = 160;
+    const calculatedHeight = containerWidth * ratio;
+    
+    // Apply the exact aspect ratio
+    img.style.width = `${containerWidth}px`;
+    img.style.height = `${calculatedHeight}px`;
+    img.style.objectFit = 'cover';
+    
+    // For square images (1:1), ensure it's actually square
+    if (aspectRatio === '1:1') {
+        img.style.width = '160px';
+        img.style.height = '160px';
+    }
+}
+
+async function loadGlobalSettings() {
+    try {
+        const response = await fetch('/load-global-settings');
+        if (response.ok) {
+            const serverGlobalSettings = await response.json();
+            globalSettings = serverGlobalSettings;
+        }
+    } catch (error) {
+        console.log('Using default global settings');
+    }
+}
+
+async function saveGlobalSettings() {
+    try {
+        const response = await fetch('/save-global-settings', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(globalSettings)
+        });
+        
+        if (!response.ok) {
+            console.error('Failed to save global settings');
+        }
+    } catch (error) {
+        console.error('Error saving global settings:', error);
+    }
+}
+
+// =-=-=-=-=-=-=-=-=-=-=-=-=-
+// SESSION & STATE MANAGEMENT
+// =-=-=-=-=-=-=-=-=-=-=-=-=-
 async function loadDataFromServer() {
     if (dataLoaded) return;
     await initializeGlobalSettings();
@@ -182,108 +621,71 @@ async function switchToSession(profileName) {
     }
 }
 
-// =-=-=-=-=-=-=-=-=-=-=-=-
-// SETTINGS & CONFIGURATION
-// =-=-=-=-=-=-=-=-=-=-=-=-
-function initializeSettings() {
-    if (!data.settings) {
-        data.settings = {
-            defaultFolderAspectRatio: '8:3',
-            defaultFolderColor: '#28a745',
-            defaultEntryAspectRatio: '8:3',
-            defaultEntryColor: '#6c757d',
-            defaultFolderWhiteText: false,
-            linksExpandedByDefault: true,
-            noteExpandedByDefault: true,
-            tagsExpandedByDefault: false,
-            entryClickAction: 'openLinks' // 'openLinks' or 'copyNote'
-        };
-    }
-}
-
-function applyDefaultSettings(item, type) {
-    initializeSettings();
+function assignJsonToProfile(profileName) {
+    const profile = globalSettings.profiles.find(p => p.name === profileName);
+    if (!profile) return;
     
-    if (type === 'folder') {
-        if (!item.aspectRatio) {
-            item.aspectRatio = data.settings.defaultFolderAspectRatio;
+    // Create a file input to select JSON
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.json';
+    fileInput.style.display = 'none';
+    
+    fileInput.addEventListener('change', async function(e) {
+        const file = e.target.files[0];
+        if (file) {
+            if (file.type !== 'application/json') {
+                showErrorMessage('Please select a valid JSON file', 2);
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                try {
+                    const jsonData = JSON.parse(e.target.result);
+                    
+                    // Basic validation
+                    if (!jsonData || typeof jsonData !== 'object') {
+                        showErrorMessage('Invalid JSON structure', 2);
+                        return;
+                    }
+                    
+                    const fileName = file.name.replace('.json', '');
+                    const profilePath = `./Profiles/${fileName}.json`;
+                    
+                    // Save JSON to profiles directory
+                    const response = await fetch('/save-profile', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            path: profilePath,
+                            data: jsonData
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        profile.value = profilePath;
+                        await saveGlobalSettings();
+                        renderProfilesList();
+                        showErrorMessage(`JSON assigned to ${profileName}`, 1);
+                    } else {
+                        showErrorMessage('Failed to save JSON file', 2);
+                    }
+                    
+                } catch (error) {
+                    showErrorMessage('Invalid JSON file format', 2);
+                    console.error('JSON parse error:', error);
+                }
+            };
+            reader.readAsText(file);
         }
-        if (!item.color) {
-            item.color = data.settings.defaultFolderColor;
-        }
-        if (item.whiteText === undefined) {
-            item.whiteText = data.settings.defaultFolderWhiteText;
-        }
-        if (!item.folderTags) {
-            item.folderTags = [];
-        }
-    } else if (type === 'entry') {
-        if (!item.aspectRatio) {
-            item.aspectRatio = data.settings.defaultEntryAspectRatio;
-        }
-        if (!item.color) {
-            item.color = data.settings.defaultEntryColor;
-        }
-        if (!item.entryTags) {
-            item.entryTags = [];
-        }
-    }
-}
-
-async function initializeGlobalSettings() {
-    try {
-        const response = await fetch('/load-global-settings');
-        if (response.ok) {
-            const serverGlobalSettings = await response.json();
-            globalSettings = serverGlobalSettings;
-        } else {
-            // Create default global settings file
-            await createDefaultGlobalSettings();
-        }
-    } catch (error) {
-        console.log('Creating default global settings file');
-        await createDefaultGlobalSettings();
-    }
-}
-
-async function createDefaultGlobalSettings() {
-    globalSettings = {
-        activeSession: "profile1",
-        profiles: [
-            { name: "profile1", value: "./data.json" }
-        ]
-    };
-    await saveGlobalSettings();
-}
-
-async function saveGlobalSettings() {
-    try {
-        const response = await fetch('/save-global-settings', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(globalSettings)
-        });
-        
-        if (!response.ok) {
-            console.error('Failed to save global settings');
-        }
-    } catch (error) {
-        console.error('Error saving global settings:', error);
-    }
-}
-
-async function loadGlobalSettings() {
-    try {
-        const response = await fetch('/load-global-settings');
-        if (response.ok) {
-            const serverGlobalSettings = await response.json();
-            globalSettings = serverGlobalSettings;
-        }
-    } catch (error) {
-        console.log('Using default global settings');
-    }
+    });
+    
+    document.body.appendChild(fileInput);
+    fileInput.click();
+    document.body.removeChild(fileInput);
 }
 
 function renderProfilesList() {
@@ -509,73 +911,6 @@ async function renameProfile(profileName) {
     setupModalEscapeKey(modal);
 }
 
-function assignJsonToProfile(profileName) {
-    const profile = globalSettings.profiles.find(p => p.name === profileName);
-    if (!profile) return;
-    
-    // Create a file input to select JSON
-    const fileInput = document.createElement('input');
-    fileInput.type = 'file';
-    fileInput.accept = '.json';
-    fileInput.style.display = 'none';
-    
-    fileInput.addEventListener('change', async function(e) {
-        const file = e.target.files[0];
-        if (file) {
-            if (file.type !== 'application/json') {
-                showErrorMessage('Please select a valid JSON file', 2);
-                return;
-            }
-            
-            const reader = new FileReader();
-            reader.onload = async function(e) {
-                try {
-                    const jsonData = JSON.parse(e.target.result);
-                    
-                    // Basic validation
-                    if (!jsonData || typeof jsonData !== 'object') {
-                        showErrorMessage('Invalid JSON structure', 2);
-                        return;
-                    }
-                    
-                    const fileName = file.name.replace('.json', '');
-                    const profilePath = `./Profiles/${fileName}.json`;
-                    
-                    // Save JSON to profiles directory
-                    const response = await fetch('/save-profile', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            path: profilePath,
-                            data: jsonData
-                        })
-                    });
-                    
-                    if (response.ok) {
-                        profile.value = profilePath;
-                        await saveGlobalSettings();
-                        renderProfilesList();
-                        showErrorMessage(`JSON assigned to ${profileName}`, 1);
-                    } else {
-                        showErrorMessage('Failed to save JSON file', 2);
-                    }
-                    
-                } catch (error) {
-                    showErrorMessage('Invalid JSON file format', 2);
-                    console.error('JSON parse error:', error);
-                }
-            };
-            reader.readAsText(file);
-        }
-    });
-    
-    document.body.appendChild(fileInput);
-    fileInput.click();
-    document.body.removeChild(fileInput);
-}
-
 async function saveCurrentToProfile(profileName) {
     const profile = globalSettings.profiles.find(p => p.name === profileName);
     if (!profile) return;
@@ -639,9 +974,9 @@ async function deleteProfile(profileName) {
     });
 }
 
-// =-=-=-=-=-=-=-=-=-=-=-=-=
-// NAVIGATION & UI RENDERING
-// =-=-=-=-=-=-=-=-=-=-=-=-=
+// =-=-=-=-=-=-=-=-=-=-=-=
+// UI RENDERING & HANDLING
+// =-=-=-=-=-=-=-=-=-=-=-=
 function render() {
     const mainView = document.getElementById('main-view');
     const folder = getCurrentFolder();
@@ -899,6 +1234,415 @@ function createPathBar() {
     return pathBar;
 }
 
+function createBatchActionsBar() {
+    const bar = document.createElement('div');
+    bar.className = 'batch-actions-bar';
+    bar.id = 'batch-actions-bar';
+    
+    bar.innerHTML = `
+        <div class="batch-actions">
+            <button id="batch-delete-btn" class="batch-delete-btn" data-tooltip="Delete">🗑️</button>
+            <button id="batch-export-btn" class="batch-export-btn" data-tooltip="Export as JSON">📤</button>
+            <button id="batch-duplicate-btn" class="batch-duplicate-btn" data-tooltip="Duplicate">📄</button>
+            <button id="batch-open-btn" class="batch-open-btn" data-tooltip="Open">🚀</button>
+            <button id="batch-move-btn" class="batch-move-btn" data-tooltip="Move">📁</button>
+        </div>
+        <div class="batch-actions">
+            <button id="batch-clear-btn" class="batch-clear-btn" data-tooltip="Clear Selection">✗</button>
+            <button id="batch-select-all-btn" class="batch-select-all-btn" data-tooltip="Select All">✓</button>
+        </div>
+        <div class="batch-counter" id="batch-counter">0 items selected</div>
+    `;
+    
+    bar.querySelector('#batch-select-all-btn').onclick = selectAllItems;
+    bar.querySelector('#batch-clear-btn').onclick = clearSelection;
+    bar.querySelector('#batch-move-btn').onclick = showMoveModal;
+    bar.querySelector('#batch-open-btn').onclick = () => {
+        if (selectedItems.size === 0) {
+            showErrorMessage('No items selected to open', 1);
+            return;
+        }
+        openAllSelectedItems();
+    };
+    bar.querySelector('#batch-export-btn').onclick = () => {
+        if (selectedItems.size === 0) {
+            showErrorMessage('No items selected to export', 1);
+            return;
+        }
+        exportSelectedItemsAsJson();
+    };
+    bar.querySelector('#batch-duplicate-btn').onclick = () => {
+        if (selectedItems.size === 0) {
+            showErrorMessage('No items selected to duplicate', 1);
+            return;
+        }
+        duplicateSelectedItems();
+    };
+    bar.querySelector('#batch-delete-btn').onclick = () => {
+        if (selectedItems.size === 0) {
+            showErrorMessage('No items selected to delete', 1);
+            return;
+        }
+        deleteSelectedItemsWithConfirmation();
+    };
+    
+    return bar;
+}
+
+function setupMainAreaDragDrop(contentDiv) {
+    let dragCounter = 0;
+
+    contentDiv.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        dragCounter++;
+        contentDiv.classList.add('drag-over');
+    });
+
+    contentDiv.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+    });
+
+    contentDiv.addEventListener('dragleave', (e) => {
+        dragCounter--;
+        if (dragCounter === 0) {
+            contentDiv.classList.remove('drag-over');
+        }
+    });
+
+    contentDiv.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dragCounter = 0;
+        contentDiv.classList.remove('drag-over');
+
+        const files = Array.from(e.dataTransfer.files);
+        const urls = e.dataTransfer.getData('text/uri-list').split('\n').filter(url => url.trim());
+        const textData = e.dataTransfer.getData('text/plain');
+
+        // Handle JSON files first
+        const jsonFiles = files.filter(file => file.name.toLowerCase().endsWith('.json'));
+        if (jsonFiles.length > 0) {
+            handleJsonDrop(jsonFiles[0]);
+            return; // Exit early, don't process other file types
+        }
+
+        // Handle image files
+        const imageFiles = files.filter(file => isImageFile(file));
+        imageFiles.forEach(async file => {
+            const fileName = file.name.replace(/\.[^/.]+$/, "");
+            const newEntryName = `Image: ${fileName}`;
+    
+            // Convert to base64 and save
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                const base64Data = e.target.result;
+        
+                try {
+                    const response = await fetch('/save-image', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            imageData: base64Data,
+                            suggestedName: fileName
+                        })
+                    });
+            
+                    if (response.ok) {
+                        const result = await response.json();
+                        createNewEntry(newEntryName, '', [], result.path);
+                        showErrorMessage(`Image saved and entry created: "${result.filename}"`, 1);
+                    } else {
+                        createNewEntry(newEntryName, '', []);
+                        showErrorMessage('Failed to save image. Entry created without cover.', 2);
+                    }
+                } catch (error) {
+                    createNewEntry(newEntryName, '', []);
+                    showErrorMessage('Error processing image. Entry created without cover.', 2);
+                }
+            };
+            reader.readAsDataURL(file);
+        });
+
+        // Handle URLs
+        if (urls.length > 0) {
+            urls.forEach(url => {
+                if (url.trim()) {
+                    if (isImageUrl(url)) {
+                        showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
+                    } else {
+                        createNewEntry(`Link from ${extractDomainFromUrl(url)}`, '', [url]);
+                    }
+                }
+            });
+        } else if (textData && isUrl(textData)) {
+            if (isImageUrl(textData)) {
+                showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
+            } else {
+                createNewEntry(`Link from ${extractDomainFromUrl(textData)}`, '', [textData]);
+            }
+        }
+    });
+}
+
+function setupFolderDragDrop(folderDiv, folderIdx) {
+    let dragCounter = 0;
+
+    folderDiv.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter++;
+    
+        // Determine drag text based on content type
+        const files = Array.from(e.dataTransfer.files);
+        const urls = e.dataTransfer.getData('text/uri-list').split('\n').filter(url => url.trim());
+        const textData = e.dataTransfer.getData('text/plain');
+    
+        const imageFiles = files.filter(file => isImageFile(file));
+        const hasImageUrls = urls.some(url => isImageUrl(url)) || (textData && isImageUrl(textData));
+    
+        let dragText = "Add to folder";
+        if (imageFiles.length > 0 || hasImageUrls) {
+            dragText = "Set as cover image";
+        }
+    
+        folderDiv.style.setProperty('--drag-text', `"${dragText}"`);
+        folderDiv.classList.add('folder-drag-over');
+    });
+
+    folderDiv.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    });
+
+    folderDiv.addEventListener('dragleave', (e) => {
+        e.stopPropagation();
+        dragCounter--;
+        if (dragCounter === 0) {
+            folderDiv.classList.remove('folder-drag-over');
+            folderDiv.style.removeProperty('--drag-text');
+        }
+    });
+
+    folderDiv.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter = 0;
+        folderDiv.classList.remove('folder-drag-over');
+        folderDiv.style.removeProperty('--drag-text');
+
+        const files = Array.from(e.dataTransfer.files);
+        const urls = e.dataTransfer.getData('text/uri-list').split('\n').filter(url => url.trim());
+        const textData = e.dataTransfer.getData('text/plain');
+
+        // Ignore JSON files on folders
+        const jsonFiles = files.filter(file => file.name.toLowerCase().endsWith('.json'));
+        if (jsonFiles.length > 0) {
+            return;
+        }
+
+        // Handle image files - save and set as folder cover
+        const imageFiles = files.filter(file => isImageFile(file));
+        if (imageFiles.length > 0) {
+            const file = imageFiles[0];
+            const folder = getCurrentFolder();
+            const folderName = folder.folders[folderIdx].name || 'folder';
+    
+            // Convert to base64 and save
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                const base64Data = e.target.result;
+        
+                try {
+                    const response = await fetch('/save-image', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            imageData: base64Data,
+                            suggestedName: folderName
+                        })
+                    });
+            
+                    if (response.ok) {
+                        const result = await response.json();
+                        setCoverImage('folder', folderIdx, result.path);
+                    } else {
+                        showErrorMessage('Failed to save dropped image', 2);
+                    }
+                } catch (error) {
+                    showErrorMessage('Error processing dropped image', 2);
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+        else if (urls.length > 0 && urls.some(url => isImageUrl(url))) {
+            showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
+        }
+        else if (textData && isImageUrl(textData)) {
+            showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
+        }
+        // Handle regular links - create new entry in folder
+        else if (urls.length > 0) {
+            urls.forEach(url => {
+                if (url.trim() && !isImageUrl(url)) {
+                    createEntryInFolder(folderIdx, url);
+                }
+            });
+        }
+        else if (textData && isUrl(textData) && !isImageUrl(textData)) {
+            createEntryInFolder(folderIdx, textData);
+        }
+
+        // Prevent folder navigation after drop
+        setTimeout(() => {
+            folderDiv.onclick = (e) => e.preventDefault();
+            setTimeout(() => {
+                folderDiv.onclick = (e) => {
+                    if (e.defaultPrevented) return;
+                    if (selectionMode) {
+                        toggleSelection(`folder:${folderIdx}`, folderDiv);
+                    } else {
+                        currentPath.push(folderIdx);
+                        render();
+                    }
+                };
+            }, 100);
+        }, 0);
+    });
+}
+
+function setupEntryDragDrop(entryDiv, entryIdx) {
+    let dragCounter = 0;
+
+    entryDiv.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter++;
+    
+        // Determine drag text based on content type
+        const files = Array.from(e.dataTransfer.files);
+        const urls = e.dataTransfer.getData('text/uri-list').split('\n').filter(url => url.trim());
+        const textData = e.dataTransfer.getData('text/plain');
+
+        const imageFiles = files.filter(file => isImageFile(file));
+        const hasImageUrls = urls.some(url => isImageUrl(url)) || (textData && isImageUrl(textData));
+
+        let dragText = "Add to entry";
+        if (imageFiles.length > 0 || hasImageUrls) {
+            dragText = "Image functionality coming soon";
+        }
+    
+        entryDiv.style.setProperty('--drag-text', `"${dragText}"`);
+        entryDiv.classList.add('entry-drag-over');
+    });
+
+    entryDiv.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    });
+
+    entryDiv.addEventListener('dragleave', (e) => {
+        e.stopPropagation();
+        dragCounter--;
+        if (dragCounter === 0) {
+            entryDiv.classList.remove('entry-drag-over');
+            entryDiv.style.removeProperty('--drag-text');
+        }
+    });
+
+    entryDiv.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter = 0;
+        entryDiv.classList.remove('entry-drag-over');
+        entryDiv.style.removeProperty('--drag-text');
+
+        const files = Array.from(e.dataTransfer.files);
+        const urls = e.dataTransfer.getData('text/uri-list').split('\n').filter(url => url.trim());
+        const textData = e.dataTransfer.getData('text/plain');
+
+        // Ignore JSON files on entries
+        const jsonFiles = files.filter(file => file.name.toLowerCase().endsWith('.json'));
+        if (jsonFiles.length > 0) {
+            return;
+        }
+
+        // Handle image files - save and set as cover
+        const imageFiles = files.filter(file => isImageFile(file));
+        if (imageFiles.length > 0) {
+            const file = imageFiles[0];
+            const folder = getCurrentFolder();
+            const entryName = folder.entries[entryIdx].name || 'entry';
+    
+            // Convert to base64 and save
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                const base64Data = e.target.result;
+        
+                try {
+                    const response = await fetch('/save-image', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            imageData: base64Data,
+                            suggestedName: entryName
+                        })
+                    });
+            
+                    if (response.ok) {
+                        const result = await response.json();
+                        setCoverImage('entry', entryIdx, result.path);
+                    } else {
+                        showErrorMessage('Failed to save dropped image', 2);
+                    }
+                } catch (error) {
+                    showErrorMessage('Error processing dropped image', 2);
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+        // Handle URLs
+        else if (urls.length > 0) {
+            // Check for image URLs first and block them
+            const imageUrls = urls.filter(url => isImageUrl(url));
+            const regularUrls = urls.filter(url => !isImageUrl(url));
+
+            if (imageUrls.length > 0) {
+                showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
+            }
+
+            // Add regular URLs as links
+            regularUrls.forEach(url => addLinkToEntry(entryIdx, url));
+        }
+        // Handle single URL from text
+        else if (textData && isUrl(textData)) {
+            if (isImageUrl(textData)) {
+                showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
+            } else {
+                addLinkToEntry(entryIdx, textData);
+            }
+        }
+        
+        // Prevent accidental click directly after drop, then fully restore
+        const originalOnClick = entryDiv.onclick;
+
+        setTimeout(() => {
+            entryDiv.onclick = (e) => e.preventDefault();
+            setTimeout(() => {
+                entryDiv.onclick = originalOnClick;
+            }, 100);
+        }, 0);
+    });
+}
+
+// =-=-=-=-=-
+// NAVIGATION
+// =-=-=-=-=-
 function navigateToFolder(folderIndex) {
     const newPath = [...currentPath, folderIndex];
     addToHistory(newPath);
@@ -996,175 +1740,9 @@ function addToHistory(newPath) {
     }
 }
 
-function applyAspectRatioStyles() {
-    const folders = document.querySelectorAll('.folder');
-    const entries = document.querySelectorAll('.entry');
-    const currentFolder = getCurrentFolder();
-    
-    const { folders: sortedFolders, entries: sortedEntries } = sortFoldersAndEntries(
-        currentFolder.folders || [], 
-        currentFolder.entries || [], 
-        currentSort
-    );
-    
-    folders.forEach((folderElement, index) => {
-        const originalIdx = currentFolder.folders.findIndex(original => original === sortedFolders[index]);
-        const folder = currentFolder.folders[originalIdx];
-        const aspectRatio = folder?.aspectRatio || '8:3';
-        const img = folderElement.querySelector('img');
-        if (img) {
-            setImageAspectRatio(img, aspectRatio);
-        }
-    });
-    
-    entries.forEach((entryElement, index) => {
-        const originalIdx = currentFolder.entries.findIndex(original => original === sortedEntries[index]);
-        const entry = currentFolder.entries[originalIdx];
-        const aspectRatio = entry?.aspectRatio || '8:3';
-        const img = entryElement.querySelector('img');
-        if (img) {
-            setImageAspectRatio(img, aspectRatio);
-        }
-    });
-}
-
-function applyDynamicColors() {
-    const folders = document.querySelectorAll('.folder');
-    const entries = document.querySelectorAll('.entry');
-    
-    folders.forEach((folderElement, index) => {
-        const currentFolder = getCurrentFolder();
-        const { folders: sortedFolders } = sortFoldersAndEntries(
-            currentFolder.folders || [], 
-            currentFolder.entries || [], 
-            currentSort
-        );
-        
-        // Get the original folder data using the display index
-        const originalIdx = currentFolder.folders.findIndex(original => original === sortedFolders[index]);
-        const folder = currentFolder.folders[originalIdx];
-        const color = folder?.color || '#28a745';
-        const whiteText = folder?.whiteText || false;
-        
-        // Create color variations for folder
-        const variations = createColorVariations(color, 'folder');
-        
-        folderElement.style.setProperty('--folder-bg-color', variations.gradient);
-        folderElement.style.setProperty('--folder-border-color', variations.border);
-        
-        // Apply text colors
-        const folderName = folderElement.querySelector('.folder-name');
-        const folderCount = folderElement.querySelector('.folder-count');
-        
-        if (whiteText) {
-            folderName.style.color = 'white';
-            folderCount.style.color = '#e0e0e0e0';
-        } else {
-            folderName.style.color = '#333';
-            folderCount.style.color = '#474747ff';
-        }
-    });
-    
-    entries.forEach((entryElement, index) => {
-        const currentFolder = getCurrentFolder();
-        const { entries: sortedEntries } = sortFoldersAndEntries(
-            currentFolder.folders || [], 
-            currentFolder.entries || [], 
-            currentSort
-        );
-        
-        // Get the original entry data using the display index
-        const originalIdx = currentFolder.entries.findIndex(original => original === sortedEntries[index]);
-        const entry = currentFolder.entries[originalIdx];
-        const color = entry?.color || '#6c757d';
-        
-        // Create color variations for entry
-        const variations = createColorVariations(color, 'entry');
-        
-        entryElement.style.setProperty('--entry-border-color', variations.gradient);
-    });
-}
-
-function setImageAspectRatio(img, aspectRatio) {
-    const [width, height] = aspectRatio.split(':').map(Number);
-    const ratio = height / width;
-    
-    // Set container width to 160px and calculate height to maintain aspect ratio
-    const containerWidth = 160;
-    const calculatedHeight = containerWidth * ratio;
-    
-    // Apply the exact aspect ratio
-    img.style.width = `${containerWidth}px`;
-    img.style.height = `${calculatedHeight}px`;
-    img.style.objectFit = 'cover';
-    
-    // For square images (1:1), ensure it's actually square
-    if (aspectRatio === '1:1') {
-        img.style.width = '160px';
-        img.style.height = '160px';
-    }
-}
-
-function adjustColorBrightness(color, percent) {
-    const num = parseInt(color.replace("#", ""), 16);
-    const amt = Math.round(2.55 * percent);
-    const R = (num >> 16) + amt;
-    const G = (num >> 8 & 0x00FF) + amt;
-    const B = (num & 0x0000FF) + amt;
-    
-    return "#" + (0x1000000 + (R < 255 ? R < 1 ? 0 : R : 255) * 0x10000 +
-        (G < 255 ? G < 1 ? 0 : G : 255) * 0x100 +
-        (B < 255 ? B < 1 ? 0 : B : 255)).toString(16).slice(1);
-}
-
-function createColorVariations(baseColor, type = 'folder') {
-    // Parse the hex color
-    const num = parseInt(baseColor.replace("#", ""), 16);
-    const r = (num >> 16) & 255;
-    const g = (num >> 8) & 255;
-    const b = num & 255;
-    
-    // Create variations based on type
-    if (type === 'folder') {
-        // For folders: create a gradient from lighter to darker
-        const lighterR = Math.min(255, r + 40);
-        const lighterG = Math.min(255, g + 40);
-        const lighterB = Math.min(255, b + 40);
-        
-        const darkerR = Math.max(0, r - 40);
-        const darkerG = Math.max(0, g - 40);
-        const darkerB = Math.max(0, b - 40);
-        
-        const lighterColor = `#${((1 << 24) + (lighterR << 16) + (lighterG << 8) + lighterB).toString(16).slice(1)}`;
-        const darkerColor = `#${((1 << 24) + (darkerR << 16) + (darkerG << 8) + darkerB).toString(16).slice(1)}`;
-        
-        return {
-            gradient: `linear-gradient(135deg, ${lighterColor}, ${baseColor}, ${darkerColor})`,
-            border: darkerColor
-        };
-    } else if (type === 'entry') {
-        // For entries: create border gradient variations
-        const lighterR = Math.min(255, r + 30);
-        const lighterG = Math.min(255, g + 30);
-        const lighterB = Math.min(255, b + 30);
-        
-        const darkerR = Math.max(0, r - 30);
-        const darkerG = Math.max(0, g - 30);
-        const darkerB = Math.max(0, b - 30);
-        
-        const lighterColor = `#${((1 << 24) + (lighterR << 16) + (lighterG << 8) + lighterB).toString(16).slice(1)}`;
-        const darkerColor = `#${((1 << 24) + (darkerR << 16) + (darkerG << 8) + darkerB).toString(16).slice(1)}`;
-        
-        return {
-            gradient: `linear-gradient(45deg, ${lighterColor}, ${darkerColor})`,
-            border: baseColor
-        };
-    }
-}
-
-// =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-// CONTENT CREATION & MODIFICATION
-// =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// =-=-=-=-=-=-=-=
+// CONTENT ACTIONS
+// =-=-=-=-=-=-=-=
 function createNewEntry(name, cover, links) {
     const folder = getCurrentFolder();
     const newEntry = {
@@ -1191,19 +1769,6 @@ function createEntryInFolder(folderIndex, link) {
     };
     applyDefaultSettings(newEntry, 'entry');
     targetFolder.entries.push(newEntry);
-    autoSave();
-    render();
-    refreshSearchIfActive();
-}
-
-function addLinkToEntry(entryIndex, link) {
-    const folder = getCurrentFolder();
-    const entry = folder.entries[entryIndex];
-    if (!entry.links) {
-        entry.links = [];
-    }
-    entry.links.push(link);
-    
     autoSave();
     render();
     refreshSearchIfActive();
@@ -1461,92 +2026,46 @@ function deleteEntryWithConfirmation(entryIdx, modal) {
     });
 }
 
-function setCoverImage(targetType, targetIndex, imageSource) {
+function sortFoldersAndEntries(folders, entries, sortType) {
+    const foldersCopy = [...folders];
+    const entriesCopy = [...entries];
+    
+    switch (sortType) {
+        case 'name-asc':
+            foldersCopy.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+            entriesCopy.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+            break;
+        case 'name-desc':
+            foldersCopy.sort((a, b) => (b.name || '').localeCompare(a.name || ''));
+            entriesCopy.sort((a, b) => (b.name || '').localeCompare(a.name || ''));
+            break;
+        case 'count-asc':
+            foldersCopy.sort((a, b) => getTotalEntries(a) - getTotalEntries(b));
+            entriesCopy.sort((a, b) => getLinksCount(a) - getLinksCount(b));
+            break;
+        case 'count-desc':
+            foldersCopy.sort((a, b) => getTotalEntries(b) - getTotalEntries(a));
+            entriesCopy.sort((a, b) => getLinksCount(b) - getLinksCount(a));
+            break;
+        default:
+            // No sorting
+            break;
+    }
+    
+    return { folders: foldersCopy, entries: entriesCopy };
+}
+
+function addLinkToEntry(entryIndex, link) {
     const folder = getCurrentFolder();
-    
-    // Check if it's a web URL and block it
-    if (imageSource.startsWith('http://') || imageSource.startsWith('https://')) {
-        showErrorMessage('Web image URLs are not allowed. Please download the image and upload it locally instead.', 2);
-        return;
+    const entry = folder.entries[entryIndex];
+    if (!entry.links) {
+        entry.links = [];
     }
-    
-    let finalImageSource = imageSource;
-    let messageText = '';
-    
-    // Handle different types of image sources
-    if (imageSource.startsWith('./IMG/')) {
-        // Local saved image
-        finalImageSource = imageSource;
-        messageText = 'Local image file saved successfully!';
-    } else if (imageSource.startsWith('file://')) {
-        // Direct file:// URLs (still allow these for manual entry)
-        finalImageSource = imageSource;
-        messageText = 'Local file path saved.';
-    } else {
-        // Unknown format - allow but warn
-        finalImageSource = imageSource;
-        messageText = 'Image source saved.';
-    }
-    
-    let updatedItem = null;
-    
-    if (targetType === 'folder') {
-        folder.folders[targetIndex].cover = finalImageSource;
-        updatedItem = folder.folders[targetIndex];
-        showErrorMessage(`Folder cover updated! ${messageText}`, 1);
-    } else if (targetType === 'entry') {
-        folder.entries[targetIndex].cover = finalImageSource;
-        updatedItem = folder.entries[targetIndex];
-        showErrorMessage(`Entry cover updated! ${messageText}`, 1);
-    }
+    entry.links.push(link);
     
     autoSave();
     render();
     refreshSearchIfActive();
-}
-
-function applyAspectRatio(targetType, targetIndex, aspectRatio) {
-    const folder = getCurrentFolder();
-    
-    if (targetType === 'folder') {
-        folder.folders[targetIndex].aspectRatio = aspectRatio;
-    } else if (targetType === 'entry') {
-        folder.entries[targetIndex].aspectRatio = aspectRatio;
-    }
-    
-    autoSave();
-    render();
-}
-
-function handleEntryClick(entry, entryIdx) {
-    initializeSettings();
-    const currentFolder = getCurrentFolder();
-    const targetEntry = currentFolder.entries[entryIdx];
-    
-    if (data.settings.entryClickAction === 'copyNote') {
-        const note = targetEntry.note || '';
-        if (!note.trim()) {
-            showErrorMessage('Entry has no note to copy', 1);
-            return;
-        }
-        
-        navigator.clipboard.writeText(note).then(() => {
-            showErrorMessage('Note copied to clipboard!', 1);
-        }).catch(() => {
-            showErrorMessage('Failed to copy note to clipboard', 2);
-        });
-    } else {
-        // Default: open all links
-        const links = targetEntry.links || [];
-        const validLinks = links.filter(link => link && link.trim() && isValidLinkUrl(link.trim()));
-        
-        if (validLinks.length === 0) {
-            showErrorMessage('Entry has no links to open', 1);
-            return;
-        }
-        
-        openAllLinks(validLinks);
-    }
 }
 
 function renderLinksFromJSON(links, container) {
@@ -1646,24 +2165,35 @@ function openAllLinks(links) {
     }
 }
 
-function createEmptyJsonData() {
-    return {
-        name: "Root",
-        cover: "",
-        folders: [],
-        entries: [],
-        settings: {
-            defaultFolderAspectRatio: '8:3',
-            defaultFolderColor: '#28a745',
-            defaultEntryAspectRatio: '8:3',
-            defaultEntryColor: '#6c757d',
-            defaultFolderWhiteText: false,
-            linksExpandedByDefault: true,
-            noteExpandedByDefault: true,
-            tagsExpandedByDefault: false,
-            entryClickAction: 'openLinks'
+function handleEntryClick(entry, entryIdx) {
+    initializeSettings();
+    const currentFolder = getCurrentFolder();
+    const targetEntry = currentFolder.entries[entryIdx];
+    
+    if (data.settings.entryClickAction === 'copyNote') {
+        const note = targetEntry.note || '';
+        if (!note.trim()) {
+            showErrorMessage('Entry has no note to copy', 1);
+            return;
         }
-    };
+        
+        navigator.clipboard.writeText(note).then(() => {
+            showErrorMessage('Note copied to clipboard!', 1);
+        }).catch(() => {
+            showErrorMessage('Failed to copy note to clipboard', 2);
+        });
+    } else {
+        // Default: open all links
+        const links = targetEntry.links || [];
+        const validLinks = links.filter(link => link && link.trim() && isValidLinkUrl(link.trim()));
+        
+        if (validLinks.length === 0) {
+            showErrorMessage('Entry has no links to open', 1);
+            return;
+        }
+        
+        openAllLinks(validLinks);
+    }
 }
 
 function parseTagsFromInput(tagInput) {
@@ -1685,64 +2215,85 @@ function formatTagsForDisplay(tags) {
     return tags.join('; ') + (tags.length > 0 ? ';' : '');
 }
 
-// =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-// BATCH OPERATIONS & INTERACTIONS
-// =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-function createBatchActionsBar() {
-    const bar = document.createElement('div');
-    bar.className = 'batch-actions-bar';
-    bar.id = 'batch-actions-bar';
+function handleJsonDrop(jsonFile) {
+    const reader = new FileReader();
+    reader.onload = async function(e) {
+        try {
+            const jsonData = JSON.parse(e.target.result);
+            
+            // Basic validation - reusing existing validation logic
+            if (!jsonData || typeof jsonData !== 'object') {
+                showErrorMessage('Invalid JSON structure', 2);
+                return;
+            }
+            
+            // Get the file path - this is where the local path handling happens
+            let filePath;
+            if (jsonFile.path) {
+                // Electron/desktop environment - we have the full path
+                filePath = jsonFile.path;
+                showErrorMessage(`JSON file loaded from: ${filePath}`, 1);
+            } else {
+                // Web environment - we can't get the actual file path
+                // We'll need to save it to a default location and inform the user
+                filePath = `./imported_${Date.now()}_${jsonFile.name}`;
+                showErrorMessage('Cannot access local file path in web browser. File will be saved to profiles directory.', 1);
+            }
+            
+            // Save the JSON to the server with the determined path
+            const response = await fetch('/save-json-session', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    sessionPath: filePath,
+                    data: jsonData,
+                    fileName: jsonFile.name
+                })
+            });
+            
+            if (response.ok) {
+                // Create new profile or update existing one
+                const profileName = `imported_${Date.now()}`;
+                const newProfile = {
+                    name: profileName,
+                    value: filePath
+                };
+                
+                globalSettings.profiles.push(newProfile);
+                globalSettings.activeSession = profileName;
+                
+                await saveGlobalSettings();
+                
+                // Load the new session
+                data = jsonData;
+                dataLoaded = true;
+                currentPath = [];
+                clearSelection();
+                render();
+                
+                showErrorMessage(`JSON session loaded successfully! New profile "${profileName}" created and set as active.`, 1);
+            } else {
+                showErrorMessage('Failed to save JSON session to server', 2);
+            }
+            
+        } catch (error) {
+            showErrorMessage('Invalid JSON file format', 2);
+            console.error('JSON drop error:', error);
+        }
+    };
     
-    bar.innerHTML = `
-        <div class="batch-actions">
-            <button id="batch-delete-btn" class="batch-delete-btn" data-tooltip="Delete">🗑️</button>
-            <button id="batch-export-btn" class="batch-export-btn" data-tooltip="Export as JSON">📤</button>
-            <button id="batch-duplicate-btn" class="batch-duplicate-btn" data-tooltip="Duplicate">📄</button>
-            <button id="batch-open-btn" class="batch-open-btn" data-tooltip="Open">🚀</button>
-            <button id="batch-move-btn" class="batch-move-btn" data-tooltip="Move">📁</button>
-        </div>
-        <div class="batch-actions">
-            <button id="batch-clear-btn" class="batch-clear-btn" data-tooltip="Clear Selection">✗</button>
-            <button id="batch-select-all-btn" class="batch-select-all-btn" data-tooltip="Select All">✓</button>
-        </div>
-        <div class="batch-counter" id="batch-counter">0 items selected</div>
-    `;
-    
-    bar.querySelector('#batch-select-all-btn').onclick = selectAllItems;
-    bar.querySelector('#batch-clear-btn').onclick = clearSelection;
-    bar.querySelector('#batch-move-btn').onclick = showMoveModal;
-    bar.querySelector('#batch-open-btn').onclick = () => {
-        if (selectedItems.size === 0) {
-            showErrorMessage('No items selected to open', 1);
-            return;
-        }
-        openAllSelectedItems();
-    };
-    bar.querySelector('#batch-export-btn').onclick = () => {
-        if (selectedItems.size === 0) {
-            showErrorMessage('No items selected to export', 1);
-            return;
-        }
-        exportSelectedItemsAsJson();
-    };
-    bar.querySelector('#batch-duplicate-btn').onclick = () => {
-        if (selectedItems.size === 0) {
-            showErrorMessage('No items selected to duplicate', 1);
-            return;
-        }
-        duplicateSelectedItems();
-    };
-    bar.querySelector('#batch-delete-btn').onclick = () => {
-        if (selectedItems.size === 0) {
-            showErrorMessage('No items selected to delete', 1);
-            return;
-        }
-        deleteSelectedItemsWithConfirmation();
+    reader.onerror = function() {
+        showErrorMessage('Failed to read JSON file', 2);
     };
     
-    return bar;
+    reader.readAsText(jsonFile);
 }
 
+// =-=-=-=-=-=-=-=-
+// BATCH OPERATIONS
+// =-=-=-=-=-=-=-=-
 function toggleSelectionMode() {
     selectionMode = !selectionMode;
     const btn = document.getElementById('selection-toggle-btn');
@@ -1982,28 +2533,6 @@ function performMoveOperation(selectedDestination) {
     return true;
 }
 
-function collectAllLinksFromFolder(folder, linkArray) {
-    // Collect links from direct entries
-    if (folder.entries) {
-        folder.entries.forEach(entry => {
-            if (entry.links) {
-                entry.links.forEach(link => {
-                    if (link && link.trim() && isValidLinkUrl(link.trim())) {
-                        linkArray.push(link.trim());
-                    }
-                });
-            }
-        });
-    }
-    
-    // Recursively collect from subfolders
-    if (folder.folders) {
-        folder.folders.forEach(subfolder => {
-            collectAllLinksFromFolder(subfolder, linkArray);
-        });
-    }
-}
-
 function isMovingFolderIntoItself(selectedItems, destinationPath) {
     const currentFolder = getCurrentFolder();
     
@@ -2030,6 +2559,46 @@ function isMovingFolderIntoItself(selectedItems, destinationPath) {
     }
     
     return { isInvalid: false };
+}
+
+function exportSelectedItemsAsJson() {
+    const currentFolder = getCurrentFolder();
+    const selectedFolders = [];
+    const selectedEntries = [];
+    
+    // Collect selected items
+    selectedItems.forEach(itemId => {
+        const [type, index] = itemId.split(':');
+        const idx = parseInt(index);
+        
+        if (type === 'folder' && currentFolder.folders[idx]) {
+            selectedFolders.push(deepCloneItem(currentFolder.folders[idx]));
+        } else if (type === 'entry' && currentFolder.entries[idx]) {
+            selectedEntries.push(deepCloneItem(currentFolder.entries[idx]));
+        }
+    });
+    
+    // Create new JSON with selected items as root
+    const exportData = createEmptyJsonData();
+    exportData.folders = selectedFolders;
+    exportData.entries = selectedEntries;
+    
+    try {
+        const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+        const blob = new Blob([JSON.stringify(exportData, null, 2)], {type: 'application/json'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `batch_export_${timestamp}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        
+        const count = selectedItems.size;
+        showErrorMessage(`Successfully exported ${count} item${count !== 1 ? 's' : ''} as JSON!`, 1);
+    } catch (error) {
+        showErrorMessage('Failed to export selected items', 2);
+        console.error('Export error:', error);
+    }
 }
 
 function deleteSelectedItemsWithConfirmation() {
@@ -2094,484 +2663,9 @@ function deleteSelectedItemsWithConfirmation() {
     });
 }
 
-function exportSelectedItemsAsJson() {
-    const currentFolder = getCurrentFolder();
-    const selectedFolders = [];
-    const selectedEntries = [];
-    
-    // Collect selected items
-    selectedItems.forEach(itemId => {
-        const [type, index] = itemId.split(':');
-        const idx = parseInt(index);
-        
-        if (type === 'folder' && currentFolder.folders[idx]) {
-            selectedFolders.push(deepCloneItem(currentFolder.folders[idx]));
-        } else if (type === 'entry' && currentFolder.entries[idx]) {
-            selectedEntries.push(deepCloneItem(currentFolder.entries[idx]));
-        }
-    });
-    
-    // Create new JSON with selected items as root
-    const exportData = createEmptyJsonData();
-    exportData.folders = selectedFolders;
-    exportData.entries = selectedEntries;
-    
-    try {
-        const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
-        const blob = new Blob([JSON.stringify(exportData, null, 2)], {type: 'application/json'});
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `batch_export_${timestamp}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-        
-        const count = selectedItems.size;
-        showErrorMessage(`Successfully exported ${count} item${count !== 1 ? 's' : ''} as JSON!`, 1);
-    } catch (error) {
-        showErrorMessage('Failed to export selected items', 2);
-        console.error('Export error:', error);
-    }
-}
-
-function setupMainAreaDragDrop(contentDiv) {
-    let dragCounter = 0;
-
-    contentDiv.addEventListener('dragenter', (e) => {
-        e.preventDefault();
-        dragCounter++;
-        contentDiv.classList.add('drag-over');
-    });
-
-    contentDiv.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'copy';
-    });
-
-    contentDiv.addEventListener('dragleave', (e) => {
-        dragCounter--;
-        if (dragCounter === 0) {
-            contentDiv.classList.remove('drag-over');
-        }
-    });
-
-    contentDiv.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dragCounter = 0;
-        contentDiv.classList.remove('drag-over');
-
-        const files = Array.from(e.dataTransfer.files);
-        const urls = e.dataTransfer.getData('text/uri-list').split('\n').filter(url => url.trim());
-        const textData = e.dataTransfer.getData('text/plain');
-
-        // Handle JSON files first
-        const jsonFiles = files.filter(file => file.name.toLowerCase().endsWith('.json'));
-        if (jsonFiles.length > 0) {
-            handleJsonDrop(jsonFiles[0]);
-            return; // Exit early, don't process other file types
-        }
-
-        // Handle image files
-        const imageFiles = files.filter(file => isImageFile(file));
-        imageFiles.forEach(async file => {
-            const fileName = file.name.replace(/\.[^/.]+$/, "");
-            const newEntryName = `Image: ${fileName}`;
-    
-            // Convert to base64 and save
-            const reader = new FileReader();
-            reader.onload = async function(e) {
-                const base64Data = e.target.result;
-        
-                try {
-                    const response = await fetch('/save-image', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            imageData: base64Data,
-                            suggestedName: fileName
-                        })
-                    });
-            
-                    if (response.ok) {
-                        const result = await response.json();
-                        createNewEntry(newEntryName, '', [], result.path);
-                        showErrorMessage(`Image saved and entry created: "${result.filename}"`, 1);
-                    } else {
-                        createNewEntry(newEntryName, '', []);
-                        showErrorMessage('Failed to save image. Entry created without cover.', 2);
-                    }
-                } catch (error) {
-                    createNewEntry(newEntryName, '', []);
-                    showErrorMessage('Error processing image. Entry created without cover.', 2);
-                }
-            };
-            reader.readAsDataURL(file);
-        });
-
-        // Handle URLs
-        if (urls.length > 0) {
-            urls.forEach(url => {
-                if (url.trim()) {
-                    if (isImageUrl(url)) {
-                        showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
-                    } else {
-                        createNewEntry(`Link from ${extractDomainFromUrl(url)}`, '', [url]);
-                    }
-                }
-            });
-        } else if (textData && isUrl(textData)) {
-            if (isImageUrl(textData)) {
-                showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
-            } else {
-                createNewEntry(`Link from ${extractDomainFromUrl(textData)}`, '', [textData]);
-            }
-        }
-    });
-}
-
-function handleJsonDrop(jsonFile) {
-    const reader = new FileReader();
-    reader.onload = async function(e) {
-        try {
-            const jsonData = JSON.parse(e.target.result);
-            
-            // Basic validation - reusing existing validation logic
-            if (!jsonData || typeof jsonData !== 'object') {
-                showErrorMessage('Invalid JSON structure', 2);
-                return;
-            }
-            
-            // Get the file path - this is where the local path handling happens
-            let filePath;
-            if (jsonFile.path) {
-                // Electron/desktop environment - we have the full path
-                filePath = jsonFile.path;
-                showErrorMessage(`JSON file loaded from: ${filePath}`, 1);
-            } else {
-                // Web environment - we can't get the actual file path
-                // We'll need to save it to a default location and inform the user
-                filePath = `./imported_${Date.now()}_${jsonFile.name}`;
-                showErrorMessage('Cannot access local file path in web browser. File will be saved to profiles directory.', 1);
-            }
-            
-            // Save the JSON to the server with the determined path
-            const response = await fetch('/save-json-session', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    sessionPath: filePath,
-                    data: jsonData,
-                    fileName: jsonFile.name
-                })
-            });
-            
-            if (response.ok) {
-                // Create new profile or update existing one
-                const profileName = `imported_${Date.now()}`;
-                const newProfile = {
-                    name: profileName,
-                    value: filePath
-                };
-                
-                globalSettings.profiles.push(newProfile);
-                globalSettings.activeSession = profileName;
-                
-                await saveGlobalSettings();
-                
-                // Load the new session
-                data = jsonData;
-                dataLoaded = true;
-                currentPath = [];
-                clearSelection();
-                render();
-                
-                showErrorMessage(`JSON session loaded successfully! New profile "${profileName}" created and set as active.`, 1);
-            } else {
-                showErrorMessage('Failed to save JSON session to server', 2);
-            }
-            
-        } catch (error) {
-            showErrorMessage('Invalid JSON file format', 2);
-            console.error('JSON drop error:', error);
-        }
-    };
-    
-    reader.onerror = function() {
-        showErrorMessage('Failed to read JSON file', 2);
-    };
-    
-    reader.readAsText(jsonFile);
-}
-
-function setupFolderDragDrop(folderDiv, folderIdx) {
-    let dragCounter = 0;
-
-    folderDiv.addEventListener('dragenter', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dragCounter++;
-    
-        // Determine drag text based on content type
-        const files = Array.from(e.dataTransfer.files);
-        const urls = e.dataTransfer.getData('text/uri-list').split('\n').filter(url => url.trim());
-        const textData = e.dataTransfer.getData('text/plain');
-    
-        const imageFiles = files.filter(file => isImageFile(file));
-        const hasImageUrls = urls.some(url => isImageUrl(url)) || (textData && isImageUrl(textData));
-    
-        let dragText = "Add to folder";
-        if (imageFiles.length > 0 || hasImageUrls) {
-            dragText = "Set as cover image";
-        }
-    
-        folderDiv.style.setProperty('--drag-text', `"${dragText}"`);
-        folderDiv.classList.add('folder-drag-over');
-    });
-
-    folderDiv.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-    });
-
-    folderDiv.addEventListener('dragleave', (e) => {
-        e.stopPropagation();
-        dragCounter--;
-        if (dragCounter === 0) {
-            folderDiv.classList.remove('folder-drag-over');
-            folderDiv.style.removeProperty('--drag-text');
-        }
-    });
-
-    folderDiv.addEventListener('drop', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dragCounter = 0;
-        folderDiv.classList.remove('folder-drag-over');
-        folderDiv.style.removeProperty('--drag-text');
-
-        const files = Array.from(e.dataTransfer.files);
-        const urls = e.dataTransfer.getData('text/uri-list').split('\n').filter(url => url.trim());
-        const textData = e.dataTransfer.getData('text/plain');
-
-        // Ignore JSON files on folders
-        const jsonFiles = files.filter(file => file.name.toLowerCase().endsWith('.json'));
-        if (jsonFiles.length > 0) {
-            return;
-        }
-
-        // Handle image files - save and set as folder cover
-        const imageFiles = files.filter(file => isImageFile(file));
-        if (imageFiles.length > 0) {
-            const file = imageFiles[0];
-            const folder = getCurrentFolder();
-            const folderName = folder.folders[folderIdx].name || 'folder';
-    
-            // Convert to base64 and save
-            const reader = new FileReader();
-            reader.onload = async function(e) {
-                const base64Data = e.target.result;
-        
-                try {
-                    const response = await fetch('/save-image', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            imageData: base64Data,
-                            suggestedName: folderName
-                        })
-                    });
-            
-                    if (response.ok) {
-                        const result = await response.json();
-                        setCoverImage('folder', folderIdx, result.path);
-                    } else {
-                        showErrorMessage('Failed to save dropped image', 2);
-                    }
-                } catch (error) {
-                    showErrorMessage('Error processing dropped image', 2);
-                }
-            };
-            reader.readAsDataURL(file);
-        }
-        else if (urls.length > 0 && urls.some(url => isImageUrl(url))) {
-            showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
-        }
-        else if (textData && isImageUrl(textData)) {
-            showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
-        }
-        // Handle regular links - create new entry in folder
-        else if (urls.length > 0) {
-            urls.forEach(url => {
-                if (url.trim() && !isImageUrl(url)) {
-                    createEntryInFolder(folderIdx, url);
-                }
-            });
-        }
-        else if (textData && isUrl(textData) && !isImageUrl(textData)) {
-            createEntryInFolder(folderIdx, textData);
-        }
-
-        // Prevent folder navigation after drop
-        setTimeout(() => {
-            folderDiv.onclick = (e) => e.preventDefault();
-            setTimeout(() => {
-                folderDiv.onclick = (e) => {
-                    if (e.defaultPrevented) return;
-                    if (selectionMode) {
-                        toggleSelection(`folder:${folderIdx}`, folderDiv);
-                    } else {
-                        currentPath.push(folderIdx);
-                        render();
-                    }
-                };
-            }, 100);
-        }, 0);
-    });
-}
-
-function setupEntryDragDrop(entryDiv, entryIdx) {
-    let dragCounter = 0;
-
-    entryDiv.addEventListener('dragenter', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dragCounter++;
-    
-        // Determine drag text based on content type
-        const files = Array.from(e.dataTransfer.files);
-        const urls = e.dataTransfer.getData('text/uri-list').split('\n').filter(url => url.trim());
-        const textData = e.dataTransfer.getData('text/plain');
-
-        const imageFiles = files.filter(file => isImageFile(file));
-        const hasImageUrls = urls.some(url => isImageUrl(url)) || (textData && isImageUrl(textData));
-
-        let dragText = "Add to entry";
-        if (imageFiles.length > 0 || hasImageUrls) {
-            dragText = "Image functionality coming soon";
-        }
-    
-        entryDiv.style.setProperty('--drag-text', `"${dragText}"`);
-        entryDiv.classList.add('entry-drag-over');
-    });
-
-    entryDiv.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-    });
-
-    entryDiv.addEventListener('dragleave', (e) => {
-        e.stopPropagation();
-        dragCounter--;
-        if (dragCounter === 0) {
-            entryDiv.classList.remove('entry-drag-over');
-            entryDiv.style.removeProperty('--drag-text');
-        }
-    });
-
-    entryDiv.addEventListener('drop', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dragCounter = 0;
-        entryDiv.classList.remove('entry-drag-over');
-        entryDiv.style.removeProperty('--drag-text');
-
-        const files = Array.from(e.dataTransfer.files);
-        const urls = e.dataTransfer.getData('text/uri-list').split('\n').filter(url => url.trim());
-        const textData = e.dataTransfer.getData('text/plain');
-
-        // Ignore JSON files on entries
-        const jsonFiles = files.filter(file => file.name.toLowerCase().endsWith('.json'));
-        if (jsonFiles.length > 0) {
-            return;
-        }
-
-        // Handle image files - save and set as cover
-        const imageFiles = files.filter(file => isImageFile(file));
-        if (imageFiles.length > 0) {
-            const file = imageFiles[0];
-            const folder = getCurrentFolder();
-            const entryName = folder.entries[entryIdx].name || 'entry';
-    
-            // Convert to base64 and save
-            const reader = new FileReader();
-            reader.onload = async function(e) {
-                const base64Data = e.target.result;
-        
-                try {
-                    const response = await fetch('/save-image', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            imageData: base64Data,
-                            suggestedName: entryName
-                        })
-                    });
-            
-                    if (response.ok) {
-                        const result = await response.json();
-                        setCoverImage('entry', entryIdx, result.path);
-                    } else {
-                        showErrorMessage('Failed to save dropped image', 2);
-                    }
-                } catch (error) {
-                    showErrorMessage('Error processing dropped image', 2);
-                }
-            };
-            reader.readAsDataURL(file);
-        }
-        // Handle URLs
-        else if (urls.length > 0) {
-            // Check for image URLs first and block them
-            const imageUrls = urls.filter(url => isImageUrl(url));
-            const regularUrls = urls.filter(url => !isImageUrl(url));
-
-            if (imageUrls.length > 0) {
-                showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
-            }
-
-            // Add regular URLs as links
-            regularUrls.forEach(url => addLinkToEntry(entryIdx, url));
-        }
-        // Handle single URL from text
-        else if (textData && isUrl(textData)) {
-            if (isImageUrl(textData)) {
-                showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
-            } else {
-                addLinkToEntry(entryIdx, textData);
-            }
-        }
-        
-        // Prevent accidental click directly after drop, then fully restore
-        const originalOnClick = entryDiv.onclick;
-
-        setTimeout(() => {
-            entryDiv.onclick = (e) => e.preventDefault();
-            setTimeout(() => {
-                entryDiv.onclick = originalOnClick;
-            }, 100);
-        }, 0);
-    });
-}
-
-function extractDomainFromUrl(url) {
-    try {
-        return new URL(url).hostname;
-    } catch {
-        return 'Unknown';
-    }
-}
-
-// =-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-// SEARCH & FILTER UTILITIES
-// =-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// =-=-=-=-=-=-=-=-
+// SEARCH UTILITIES
+// =-=-=-=-=-=-=-=-
 function initializeSearchFunctionality() {
     const searchToggleBtn = document.getElementById('search-toggle-btn');
     const searchInput = document.getElementById('search-input');
@@ -2582,6 +2676,34 @@ function initializeSearchFunctionality() {
     searchInput.addEventListener('keydown', handleSearchKeydown);
     
     document.addEventListener('click', handleSearchOutsideClick);
+}
+
+function performSearch(searchText) {
+    if (searchTimeout) {
+        clearTimeout(searchTimeout);
+    }
+    
+    searchTimeout = setTimeout(() => {
+        executeSearch(searchText);
+    }, 1000);
+}
+
+function executeSearch(searchText) {
+    if (!searchText || !searchText.trim()) {
+        clearSearch();
+        return;
+    }
+    
+    const trimmedSearch = searchText.trim();
+    const results = performSearchOperation(trimmedSearch, getCurrentFolder(), [...currentPath]);
+    
+    if (results.length === 0) {
+        displaySearchResults([], trimmedSearch);
+        return;
+    }
+    
+    addSearchToHistory(trimmedSearch);
+    displaySearchResults(results, trimmedSearch);
 }
 
 function handleSearchToggle() {
@@ -2692,34 +2814,6 @@ function clearSearchInput() {
     
     const helpBox = document.getElementById('search-help-box');
     helpBox.classList.add('visible');
-}
-
-function performSearch(searchText) {
-    if (searchTimeout) {
-        clearTimeout(searchTimeout);
-    }
-    
-    searchTimeout = setTimeout(() => {
-        executeSearch(searchText);
-    }, 1000);
-}
-
-function executeSearch(searchText) {
-    if (!searchText || !searchText.trim()) {
-        clearSearch();
-        return;
-    }
-    
-    const trimmedSearch = searchText.trim();
-    const results = performSearchOperation(trimmedSearch, getCurrentFolder(), [...currentPath]);
-    
-    if (results.length === 0) {
-        displaySearchResults([], trimmedSearch);
-        return;
-    }
-    
-    addSearchToHistory(trimmedSearch);
-    displaySearchResults(results, trimmedSearch);
 }
 
 function refreshSearchResults() {
@@ -2914,20 +3008,6 @@ function matchesSingleQuery(item, itemType, query) {
     }
     
     return false;
-}
-
-function getPathDisplayString(path) {
-    if (path.length === 0) return 'Root';
-    
-    let pathString = 'Root';
-    let folder = data;
-    
-    for (let i = 0; i < path.length; i++) {
-        folder = folder.folders[path[i]];
-        pathString += ' / ' + folder.name;
-    }
-    
-    return pathString;
 }
 
 function displaySearchResults(results, searchTerm) {
@@ -3237,9 +3317,192 @@ function addSearchToHistory(searchTerm) {
     historyIndex = navigationHistory.length - 1;
 }
 
-// =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-// MODAL DIALOGS & USER INTERFACE
-// =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+// =-=-=-=-=-=-=
+// MODAL DIALOGS
+// =-=-=-=-=-=-=
+function showCreateFolderModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create New Folder</h3>
+                <button class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Folder Name:</label>
+                    <input type="text" id="new-folder-name" placeholder="Enter folder name" autofocus>
+                </div>
+                <div class="modal-actions">
+                    <button id="create-folder-btn" type="button" class="btn-primary">Create</button>
+                    <button id="cancel-folder-btn" type="button" class="btn-secondary">Cancel</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Focus the input after modal is added
+    setTimeout(() => {
+        modal.querySelector('#new-folder-name').focus();
+    }, 100);
+    
+    // Event listeners
+    modal.querySelector('.close-btn').onclick = () => modal.remove();
+    modal.querySelector('#cancel-folder-btn').onclick = () => modal.remove();
+    
+    let mouseDownOnModal = false;
+    modal.addEventListener('mousedown', (e) => {
+        if (e.target === modal) {
+            mouseDownOnModal = true;
+        } else {
+            mouseDownOnModal = false;
+        }
+    });
+
+    modal.addEventListener('mouseup', (e) => {
+        if (e.target === modal && mouseDownOnModal) {
+            modal.remove();
+        }
+        mouseDownOnModal = false;
+    });
+    
+    // Create folder functionality
+    const createFolder = () => {
+        const name = modal.querySelector('#new-folder-name').value.trim();
+        if (!name) {
+            showErrorMessage('Folder name is required and cannot be empty', 2);
+            modal.querySelector('#new-folder-name').focus();
+            return;
+        }
+        
+        const folder = getCurrentFolder();
+        const newFolder = {
+            name: name,
+            cover: "",
+            folders: [],
+            entries: []
+        };
+        applyDefaultSettings(newFolder, 'folder');
+        folder.folders.push(newFolder);
+        autoSave();
+        modal.remove();
+        showErrorMessage(`Folder "${name}" created successfully!`, 1);
+
+        // Refresh search if active, otherwise render normally
+        if (isSearchActive && searchResults) {
+            refreshSearchResults();
+        } else {
+            render();
+        }
+    };
+    
+    modal.querySelector('#create-folder-btn').onclick = createFolder;
+    
+    // Handle Enter key
+    modal.querySelector('#new-folder-name').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            createFolder();
+        }
+    });
+    
+    setupModalEscapeKey(modal);
+}
+
+function showCreateEntryModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create New Entry</h3>
+                <button class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Entry Name:</label>
+                    <input type="text" id="new-entry-name" placeholder="Enter entry name" autofocus>
+                </div>
+                <div class="modal-actions">
+                    <button id="create-entry-btn" type="button" class="btn-primary">Create</button>
+                    <button id="cancel-entry-btn" type="button" class="btn-secondary">Cancel</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Focus the input after modal is added
+    setTimeout(() => {
+        modal.querySelector('#new-entry-name').focus();
+    }, 100);
+    
+    // Event listeners
+    modal.querySelector('.close-btn').onclick = () => modal.remove();
+    modal.querySelector('#cancel-entry-btn').onclick = () => modal.remove();
+    
+    let mouseDownOnModal = false;
+    modal.addEventListener('mousedown', (e) => {
+        if (e.target === modal) {
+            mouseDownOnModal = true;
+        } else {
+            mouseDownOnModal = false;
+        }
+    });
+
+    modal.addEventListener('mouseup', (e) => {
+        if (e.target === modal && mouseDownOnModal) {
+            modal.remove();
+        }
+        mouseDownOnModal = false;
+    });
+    
+    // Create entry functionality
+    const createEntry = () => {
+        const name = modal.querySelector('#new-entry-name').value.trim();
+        if (!name) {
+            showErrorMessage('Entry name is required and cannot be empty', 2);
+            modal.querySelector('#new-entry-name').focus();
+            return;
+        }
+        
+        const folder = getCurrentFolder();
+        const newEntry = {
+            name: name,
+            cover: "",
+            links: []
+        };
+        applyDefaultSettings(newEntry, 'entry');
+        folder.entries.push(newEntry);
+        autoSave();
+        modal.remove();
+        showErrorMessage(`Entry "${name}" created successfully!`, 1);
+
+        // Refresh search if active, otherwise render normally
+        if (isSearchActive && searchResults) {
+            refreshSearchResults();
+        } else {
+            render();
+        }
+    };
+    
+    modal.querySelector('#create-entry-btn').onclick = createEntry;
+    
+    // Handle Enter key
+    modal.querySelector('#new-entry-name').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            createEntry();
+        }
+    });
+    
+    setupModalEscapeKey(modal);
+}
+
 function showFolderEditModal(folder, folderIdx, onCloseCallback) {
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
@@ -3774,120 +4037,6 @@ function showMoveModal() {
     setupModalEscapeKey(modal);
 }
 
-function showDeleteConfirmationModal(itemsToDelete, onConfirm) {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    
-    // Create header text
-    let headerText = 'Delete ';
-    if (itemsToDelete.length === 1) {
-        headerText += itemsToDelete[0].type === 'folder' ? 'Folder?' : 'Entry?';
-    } else {
-        headerText += 'Selected Items?';
-    }
-    
-    // Create content description
-    let contentDescription = 'This will delete:\n';
-    
-    if (itemsToDelete.length === 1) {
-        const item = itemsToDelete[0];
-        if (item.type === 'folder') {
-            const totalEntries = getTotalEntries(item.item);
-            const subfolderCount = item.item.folders ? item.item.folders.length : 0;
-            
-            if (totalEntries === 0 && subfolderCount === 0) {
-                contentDescription += 'Empty folder';
-            } else {
-                const parts = [];
-                if (subfolderCount > 0) {
-                    parts.push(`${subfolderCount} Subfolder${subfolderCount !== 1 ? 's' : ''}`);
-                }
-                if (totalEntries > 0) {
-                    parts.push(`${totalEntries} Entr${totalEntries !== 1 ? 'ies' : 'y'}`);
-                }
-                contentDescription += parts.join(' and ');
-            }
-        } else {
-            const linksCount = getLinksCount(item.item);
-            const hasNote = item.item.note && item.item.note.trim();
-            
-            if (linksCount === 0 && !hasNote) {
-                contentDescription += 'Empty entry';
-            } else {
-                const parts = [];
-                if (linksCount > 0) {
-                    parts.push(`${linksCount} Link${linksCount !== 1 ? 's' : ''}`);
-                }
-                if (hasNote) {
-                    parts.push('1 Note');
-                }
-                contentDescription += parts.join(' and ');
-            }
-        }
-    } else {
-        // Multiple items
-        const folderCount = itemsToDelete.filter(item => item.type === 'folder').length;
-        const entryCount = itemsToDelete.filter(item => item.type === 'entry').length;
-        
-        const parts = [];
-        if (folderCount > 0) {
-            parts.push(`${folderCount} Folder${folderCount !== 1 ? 's' : ''}`);
-        }
-        if (entryCount > 0) {
-            parts.push(`${entryCount} Entr${entryCount !== 1 ? 'ies' : 'y'}`);
-        }
-        contentDescription += parts.join(' and ');
-    }
-    
-    modal.innerHTML = `
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>${headerText}</h3>
-                <button class="close-btn">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <div style="margin-bottom: 20px; white-space: pre-line;">${contentDescription}</div>
-                </div>
-                <div class="modal-actions">
-                    <button id="delete-confirm-btn" type="button" class="btn-danger">Delete</button>
-                    <button id="delete-cancel-btn" type="button" class="btn-secondary">Cancel</button>
-                </div>
-            </div>
-        </div>
-    `;
-    
-    document.body.appendChild(modal);
-    
-    // Event listeners
-    modal.querySelector('.close-btn').onclick = () => modal.remove();
-    modal.querySelector('#delete-cancel-btn').onclick = () => modal.remove();
-    
-    let mouseDownOnModal = false;
-    modal.addEventListener('mousedown', (e) => {
-        if (e.target === modal) {
-            mouseDownOnModal = true;
-        } else {
-            mouseDownOnModal = false;
-        }
-    });
-
-    modal.addEventListener('mouseup', (e) => {
-        if (e.target === modal && mouseDownOnModal) {
-            modal.remove();
-        }
-        mouseDownOnModal = false;
-    });
-    
-    // Delete confirmation
-    modal.querySelector('#delete-confirm-btn').onclick = () => {
-        modal.remove();
-        onConfirm();
-    };
-    
-    setupModalEscapeKey(modal);
-}
-
 function showHelpModal() {
     const modal = document.createElement('div');
     modal.className = 'modal-overlay help-modal';
@@ -4169,189 +4318,6 @@ function showSettingsModal() {
     setupModalEscapeKey(modal);
 }
 
-function showCreateFolderModal() {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.innerHTML = `
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>Create New Folder</h3>
-                <button class="close-btn">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label>Folder Name:</label>
-                    <input type="text" id="new-folder-name" placeholder="Enter folder name" autofocus>
-                </div>
-                <div class="modal-actions">
-                    <button id="create-folder-btn" type="button" class="btn-primary">Create</button>
-                    <button id="cancel-folder-btn" type="button" class="btn-secondary">Cancel</button>
-                </div>
-            </div>
-        </div>
-    `;
-    
-    document.body.appendChild(modal);
-    
-    // Focus the input after modal is added
-    setTimeout(() => {
-        modal.querySelector('#new-folder-name').focus();
-    }, 100);
-    
-    // Event listeners
-    modal.querySelector('.close-btn').onclick = () => modal.remove();
-    modal.querySelector('#cancel-folder-btn').onclick = () => modal.remove();
-    
-    let mouseDownOnModal = false;
-    modal.addEventListener('mousedown', (e) => {
-        if (e.target === modal) {
-            mouseDownOnModal = true;
-        } else {
-            mouseDownOnModal = false;
-        }
-    });
-
-    modal.addEventListener('mouseup', (e) => {
-        if (e.target === modal && mouseDownOnModal) {
-            modal.remove();
-        }
-        mouseDownOnModal = false;
-    });
-    
-    // Create folder functionality
-    const createFolder = () => {
-        const name = modal.querySelector('#new-folder-name').value.trim();
-        if (!name) {
-            showErrorMessage('Folder name is required and cannot be empty', 2);
-            modal.querySelector('#new-folder-name').focus();
-            return;
-        }
-        
-        const folder = getCurrentFolder();
-        const newFolder = {
-            name: name,
-            cover: "",
-            folders: [],
-            entries: []
-        };
-        applyDefaultSettings(newFolder, 'folder');
-        folder.folders.push(newFolder);
-        autoSave();
-        modal.remove();
-        showErrorMessage(`Folder "${name}" created successfully!`, 1);
-
-        // Refresh search if active, otherwise render normally
-        if (isSearchActive && searchResults) {
-            refreshSearchResults();
-        } else {
-            render();
-        }
-    };
-    
-    modal.querySelector('#create-folder-btn').onclick = createFolder;
-    
-    // Handle Enter key
-    modal.querySelector('#new-folder-name').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            createFolder();
-        }
-    });
-    
-    setupModalEscapeKey(modal);
-}
-
-function showCreateEntryModal() {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.innerHTML = `
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>Create New Entry</h3>
-                <button class="close-btn">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label>Entry Name:</label>
-                    <input type="text" id="new-entry-name" placeholder="Enter entry name" autofocus>
-                </div>
-                <div class="modal-actions">
-                    <button id="create-entry-btn" type="button" class="btn-primary">Create</button>
-                    <button id="cancel-entry-btn" type="button" class="btn-secondary">Cancel</button>
-                </div>
-            </div>
-        </div>
-    `;
-    
-    document.body.appendChild(modal);
-    
-    // Focus the input after modal is added
-    setTimeout(() => {
-        modal.querySelector('#new-entry-name').focus();
-    }, 100);
-    
-    // Event listeners
-    modal.querySelector('.close-btn').onclick = () => modal.remove();
-    modal.querySelector('#cancel-entry-btn').onclick = () => modal.remove();
-    
-    let mouseDownOnModal = false;
-    modal.addEventListener('mousedown', (e) => {
-        if (e.target === modal) {
-            mouseDownOnModal = true;
-        } else {
-            mouseDownOnModal = false;
-        }
-    });
-
-    modal.addEventListener('mouseup', (e) => {
-        if (e.target === modal && mouseDownOnModal) {
-            modal.remove();
-        }
-        mouseDownOnModal = false;
-    });
-    
-    // Create entry functionality
-    const createEntry = () => {
-        const name = modal.querySelector('#new-entry-name').value.trim();
-        if (!name) {
-            showErrorMessage('Entry name is required and cannot be empty', 2);
-            modal.querySelector('#new-entry-name').focus();
-            return;
-        }
-        
-        const folder = getCurrentFolder();
-        const newEntry = {
-            name: name,
-            cover: "",
-            links: []
-        };
-        applyDefaultSettings(newEntry, 'entry');
-        folder.entries.push(newEntry);
-        autoSave();
-        modal.remove();
-        showErrorMessage(`Entry "${name}" created successfully!`, 1);
-
-        // Refresh search if active, otherwise render normally
-        if (isSearchActive && searchResults) {
-            refreshSearchResults();
-        } else {
-            render();
-        }
-    };
-    
-    modal.querySelector('#create-entry-btn').onclick = createEntry;
-    
-    // Handle Enter key
-    modal.querySelector('#new-entry-name').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            createEntry();
-        }
-    });
-    
-    setupModalEscapeKey(modal);
-}
-
 function showCreateJsonModal(profileName, onConfirm) {
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
@@ -4397,6 +4363,120 @@ function showCreateJsonModal(profileName, onConfirm) {
     
     // Create confirmation
     modal.querySelector('#create-json-btn').onclick = () => {
+        modal.remove();
+        onConfirm();
+    };
+    
+    setupModalEscapeKey(modal);
+}
+
+function showDeleteConfirmationModal(itemsToDelete, onConfirm) {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    
+    // Create header text
+    let headerText = 'Delete ';
+    if (itemsToDelete.length === 1) {
+        headerText += itemsToDelete[0].type === 'folder' ? 'Folder?' : 'Entry?';
+    } else {
+        headerText += 'Selected Items?';
+    }
+    
+    // Create content description
+    let contentDescription = 'This will delete:\n';
+    
+    if (itemsToDelete.length === 1) {
+        const item = itemsToDelete[0];
+        if (item.type === 'folder') {
+            const totalEntries = getTotalEntries(item.item);
+            const subfolderCount = item.item.folders ? item.item.folders.length : 0;
+            
+            if (totalEntries === 0 && subfolderCount === 0) {
+                contentDescription += 'Empty folder';
+            } else {
+                const parts = [];
+                if (subfolderCount > 0) {
+                    parts.push(`${subfolderCount} Subfolder${subfolderCount !== 1 ? 's' : ''}`);
+                }
+                if (totalEntries > 0) {
+                    parts.push(`${totalEntries} Entr${totalEntries !== 1 ? 'ies' : 'y'}`);
+                }
+                contentDescription += parts.join(' and ');
+            }
+        } else {
+            const linksCount = getLinksCount(item.item);
+            const hasNote = item.item.note && item.item.note.trim();
+            
+            if (linksCount === 0 && !hasNote) {
+                contentDescription += 'Empty entry';
+            } else {
+                const parts = [];
+                if (linksCount > 0) {
+                    parts.push(`${linksCount} Link${linksCount !== 1 ? 's' : ''}`);
+                }
+                if (hasNote) {
+                    parts.push('1 Note');
+                }
+                contentDescription += parts.join(' and ');
+            }
+        }
+    } else {
+        // Multiple items
+        const folderCount = itemsToDelete.filter(item => item.type === 'folder').length;
+        const entryCount = itemsToDelete.filter(item => item.type === 'entry').length;
+        
+        const parts = [];
+        if (folderCount > 0) {
+            parts.push(`${folderCount} Folder${folderCount !== 1 ? 's' : ''}`);
+        }
+        if (entryCount > 0) {
+            parts.push(`${entryCount} Entr${entryCount !== 1 ? 'ies' : 'y'}`);
+        }
+        contentDescription += parts.join(' and ');
+    }
+    
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>${headerText}</h3>
+                <button class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <div style="margin-bottom: 20px; white-space: pre-line;">${contentDescription}</div>
+                </div>
+                <div class="modal-actions">
+                    <button id="delete-confirm-btn" type="button" class="btn-danger">Delete</button>
+                    <button id="delete-cancel-btn" type="button" class="btn-secondary">Cancel</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Event listeners
+    modal.querySelector('.close-btn').onclick = () => modal.remove();
+    modal.querySelector('#delete-cancel-btn').onclick = () => modal.remove();
+    
+    let mouseDownOnModal = false;
+    modal.addEventListener('mousedown', (e) => {
+        if (e.target === modal) {
+            mouseDownOnModal = true;
+        } else {
+            mouseDownOnModal = false;
+        }
+    });
+
+    modal.addEventListener('mouseup', (e) => {
+        if (e.target === modal && mouseDownOnModal) {
+            modal.remove();
+        }
+        mouseDownOnModal = false;
+    });
+    
+    // Delete confirmation
+    modal.querySelector('#delete-confirm-btn').onclick = () => {
         modal.remove();
         onConfirm();
     };
@@ -4525,8 +4605,28 @@ function setupModalEscapeKey(modal) {
 }
 
 // =-=-=-=-=-=-=-=-=-=-=
-// FILE HANDLING & MEDIA
+// FILE & MEDIA HANDLING
 // =-=-=-=-=-=-=-=-=-=-=
+function createEmptyJsonData() {
+    return {
+        name: "Root",
+        cover: "",
+        folders: [],
+        entries: [],
+        settings: {
+            defaultFolderAspectRatio: '8:3',
+            defaultFolderColor: '#28a745',
+            defaultEntryAspectRatio: '8:3',
+            defaultEntryColor: '#6c757d',
+            defaultFolderWhiteText: false,
+            linksExpandedByDefault: true,
+            noteExpandedByDefault: true,
+            tagsExpandedByDefault: false,
+            entryClickAction: 'openLinks'
+        }
+    };
+}
+
 function handleImageUpload(inputId, targetType = null, targetIndex = null, suggestedName = '') {
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
@@ -4772,14 +4872,6 @@ function validateTagInput(tagInput) {
     return { valid: true, tags: tags };
 }
 
-function initNotificationContainer() {
-    if (!notificationContainer) {
-        notificationContainer = document.createElement('div');
-        notificationContainer.className = 'notification-container';
-        document.body.appendChild(notificationContainer);
-    }
-}
-
 function showErrorMessage(text, level = 1) {
     initNotificationContainer();
     
@@ -4876,92 +4968,3 @@ function removeErrorMessage(errorDiv) {
         }
     }, 300);
 }
-
-// =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-// INITIALIZATION & EVENT HANDLERS 
-// =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-document.addEventListener('DOMContentLoaded', async function() {
-    // Initialize global settings and load current session
-    await loadDataFromServer();
-    initializeNavigationHistory();
-    
-    document.getElementById('new-folder-btn').onclick = showCreateFolderModal;
-    document.getElementById('new-entry-btn').onclick = showCreateEntryModal;
-
-    document.getElementById('selection-toggle-btn').onclick = toggleSelectionMode;
-    document.getElementById('help-btn').onclick = showHelpModal;
-    document.getElementById('settings-btn').onclick = showSettingsModal;
-
-    document.getElementById('export-btn').onclick = () => {
-        try {
-            const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'bookmarks.json';
-            a.click();
-            URL.revokeObjectURL(url);
-            showErrorMessage('Data exported successfully!', 1);
-        } catch (error) {
-            showErrorMessage('Failed to export data', 3);
-            console.error('Export error:', error);
-        }
-    };
-
-    document.getElementById('import-btn').onclick = () => {
-        document.getElementById('import-file').click();
-    };
-
-    document.getElementById('import-file').onchange = function() {
-        const file = this.files[0];
-        if (file) {
-            if (file.type !== 'application/json') {
-                showErrorMessage('Please select a valid JSON file', 2);
-                return;
-            }
-            
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                try {
-                    const importedData = JSON.parse(e.target.result);
-                    
-                    // Basic validation
-                    if (!importedData || typeof importedData !== 'object') {
-                        showErrorMessage('Invalid JSON structure', 2);
-                        return;
-                    }
-                    
-                    // Create a temporary file path for the imported file
-                    const tempPath = `./imported_${Date.now()}_${file.name}`;
-                    
-                    // Show import choice modal with file path
-                    showImportChoiceModal(importedData, file.name, file.path || tempPath);
-                } catch (error) {
-                    showErrorMessage('Invalid JSON file format', 2);
-                    console.error('Import error:', error);
-                }
-            };
-            reader.onerror = function() {
-                showErrorMessage('Failed to read file', 3);
-            };
-            reader.readAsText(file);
-        }
-    };
-    
-    // Initialize search functionality
-    initializeSearchFunctionality();
-
-    // Sort dropdown handler
-    document.getElementById('sort-dropdown').onchange = function(e) {
-        currentSort = e.target.value;
-        if (isSearchActive && searchResults) {
-            // Re-sort search results
-            refreshSearchResults();
-        } else {
-            render();
-        }
-    };
-
-    // Initial render
-    render();
-});
