@@ -615,6 +615,30 @@ async function switchToSession(profileName) {
     }
     
     if (globalSettings.activeSession !== profileName) {
+        // Clear any active search when switching profiles
+        if (isSearchActive) {
+            clearSearch();
+            const searchInput = document.getElementById('search-input');
+            const clearBtn = document.getElementById('search-clear-btn');
+            const helpBox = document.getElementById('search-help-box');
+            const toggleBtn = document.getElementById('search-toggle-btn');
+            const searchBarContainer = document.getElementById('search-bar-container');
+        
+            if (searchInput) searchInput.value = '';
+            if (clearBtn) clearBtn.style.display = 'none';
+            if (helpBox) helpBox.classList.remove('visible');
+        
+            // Reset search UI state
+            searchExpanded = false;
+            if (toggleBtn) {
+                toggleBtn.classList.remove('active');
+                toggleBtn.style.display = 'flex';
+            }
+            if (searchBarContainer) {
+                searchBarContainer.classList.remove('expanded');
+            }
+        }
+
         globalSettings.activeSession = profileName;
         await saveGlobalSettings();
         await loadCurrentSession();
@@ -1665,11 +1689,20 @@ function navigateUp() {
     }
     
     const newPath = currentPath.slice(0, -1);
-    addToHistory(newPath);
-    currentPath = newPath;
-    clearSelection();
-    clearSearch();
-    render();
+    
+    // If we're in search mode, perform search in the parent folder
+    if (isSearchActive && searchResults && searchResults.searchTerm) {
+        addToHistory(newPath);
+        currentPath = newPath;
+        const results = performSearchOperation(searchResults.searchTerm, getCurrentFolder(), [...currentPath]);
+        displaySearchResults(results, searchResults.searchTerm);
+    } else {
+        addToHistory(newPath);
+        currentPath = newPath;
+        clearSelection();
+        clearSearch();
+        render();
+    }
 }
 
 function navigateBack() {
@@ -1684,7 +1717,14 @@ function navigateBack() {
     if (historyItem && historyItem.type === 'search') {
         currentPath = [...historyItem.path];
         const searchInput = document.getElementById('search-input');
-        searchInput.value = historyItem.searchTerm;
+        if (searchInput) {
+            searchInput.value = historyItem.searchTerm;
+        }
+        // Clear the search timeout to prevent interference
+        if (searchTimeout) {
+            clearTimeout(searchTimeout);
+            searchTimeout = null;
+        }
         executeSearch(historyItem.searchTerm);
     } else {
         currentPath = [...(historyItem || [])];
@@ -1706,13 +1746,37 @@ function navigateForward() {
     if (historyItem && historyItem.type === 'search') {
         currentPath = [...historyItem.path];
         const searchInput = document.getElementById('search-input');
-        searchInput.value = historyItem.searchTerm;
+        if (searchInput) {
+            searchInput.value = historyItem.searchTerm;
+        }
+        // Clear the search timeout to prevent interference
+        if (searchTimeout) {
+            clearTimeout(searchTimeout);
+            searchTimeout = null;
+        }
         executeSearch(historyItem.searchTerm);
     } else {
         currentPath = [...(historyItem || [])];
         clearSearch();
         clearSelection();
         render();
+    }
+}
+
+function navigateToSearchResult(result) {
+    if (result.type === 'folder') {
+        // Clear search state and navigate to folder
+        const currentSearchTerm = searchResults ? searchResults.searchTerm : null;
+        clearSearch();
+        navigateToPath(result.path);
+
+        // Keep search input value but clear search state
+        if (currentSearchTerm) {
+            const searchInput = document.getElementById('search-input');
+            if (searchInput) {
+                searchInput.value = currentSearchTerm;
+            }
+        }
     }
 }
 
@@ -2697,12 +2761,19 @@ function executeSearch(searchText) {
     const trimmedSearch = searchText.trim();
     const results = performSearchOperation(trimmedSearch, getCurrentFolder(), [...currentPath]);
     
+    // Only add to history if this is a new search (not from history navigation)
+    const lastHistoryItem = navigationHistory[historyIndex];
+    const isFromHistory = lastHistoryItem && lastHistoryItem.type === 'search' && lastHistoryItem.searchTerm === trimmedSearch;
+    
+    if (!isFromHistory) {
+        addSearchToHistory(trimmedSearch);
+    }
+    
     if (results.length === 0) {
         displaySearchResults([], trimmedSearch);
         return;
     }
     
-    addSearchToHistory(trimmedSearch);
     displaySearchResults(results, trimmedSearch);
 }
 
@@ -3083,7 +3154,7 @@ function displaySearchResults(results, searchTerm) {
             const totalEntries = getTotalEntries(result.item);
             div.innerHTML = `
                 ${selectionMode ? `<input type="checkbox" class="selection-checkbox" ${selectedItems.has(`folder:${displayIndex}`) ? 'checked' : ''}>` : ''}
-                <img src="/static/images/folder.png" alt="Cover" title="Default folder icon">
+                <img src="${result.item.cover || '/static/images/folder.png'}" alt="Cover" title="${result.item.cover ? 'Folder cover image' : 'Default folder icon'}" onerror="this.src='/static/images/folder.png'">
                 <div class="folder-name">📁 ${result.item.name}</div>
                 <div class="folder-count">${totalEntries} entries</div>
                 <div class="search-result-path">📍 ${result.pathDisplay}</div>
@@ -3092,7 +3163,7 @@ function displaySearchResults(results, searchTerm) {
             const linksCount = getLinksCount(result.item);
             div.innerHTML = `
                 ${selectionMode ? `<input type="checkbox" class="selection-checkbox" ${selectedItems.has(`entry:${displayIndex}`) ? 'checked' : ''}>` : ''}
-                <img src="/static/images/entry.png" alt="Cover" title="Default entry icon">
+                <img src="${result.item.cover || '/static/images/entry.png'}" alt="Cover" title="${result.item.cover ? 'Entry cover image' : 'Default entry icon'}" onerror="this.src='/static/images/entry.png'">
                 <div class="entry-title">${result.item.name}</div>
                 <div class="entry-links-count">${linksCount} links</div>
                 <div class="search-result-path">📍 ${result.pathDisplay}</div>
@@ -3133,8 +3204,9 @@ function displaySearchResults(results, searchTerm) {
                 // Store current search state
                 const currentSearchState = {
                     isActive: isSearchActive,
-                    results: searchResults,
-                    currentPath: [...currentPath]
+                    results: searchResults ? { ...searchResults } : null,
+                    currentPath: [...currentPath],
+                    searchTerm: searchResults ? searchResults.searchTerm : null
                 };
                 
                 // Temporarily set path for the modal operations
@@ -3150,15 +3222,20 @@ function displaySearchResults(results, searchTerm) {
                     if (currentSearchState.isActive && currentSearchState.results) {
                         isSearchActive = currentSearchState.isActive;
                         searchResults = currentSearchState.results;
-                        refreshSearchResults();
+                        // Re-execute search to get updated results
+                        if (currentSearchState.searchTerm) {
+                            const newResults = performSearchOperation(currentSearchState.searchTerm, getCurrentFolder(), [...currentPath]);
+                            displaySearchResults(newResults, currentSearchState.searchTerm);
+                        }
                     }
                 });
             } else {
                 // Store current search state
                 const currentSearchState = {
                     isActive: isSearchActive,
-                    results: searchResults,
-                    currentPath: [...currentPath]
+                    results: searchResults ? { ...searchResults } : null,
+                    currentPath: [...currentPath],
+                    searchTerm: searchResults ? searchResults.searchTerm : null
                 };
                 
                 // Temporarily set path for the modal operations
@@ -3171,7 +3248,11 @@ function displaySearchResults(results, searchTerm) {
                     if (currentSearchState.isActive && currentSearchState.results) {
                         isSearchActive = currentSearchState.isActive;
                         searchResults = currentSearchState.results;
-                        refreshSearchResults();
+                        // Re-execute search to get updated results
+                        if (currentSearchState.searchTerm) {
+                            const newResults = performSearchOperation(currentSearchState.searchTerm, getCurrentFolder(), [...currentPath]);
+                            displaySearchResults(newResults, currentSearchState.searchTerm);
+                        }
                     }
                 });
             }
@@ -3193,7 +3274,10 @@ function displaySearchResults(results, searchTerm) {
     // Update batch actions bar
     updateBatchActionsBar();
     
-    setTimeout(() => applySearchResultColors(), 0);
+    setTimeout(() => {
+        applySearchResultColors();
+        applySearchResultAspectRatios();
+    }, 0);
 }
 
 function sortSearchResults(results, sortType) {
@@ -3231,12 +3315,15 @@ function applySearchResultColors() {
     const folders = document.querySelectorAll('.folder.search-result');
     const entries = document.querySelectorAll('.entry.search-result');
     
+    const sortedResults = sortSearchResults(searchResults.results, currentSort);
+    
     folders.forEach((folderElement, index) => {
-        const folderResults = searchResults.results.filter(r => r.type === 'folder');
+        // Find the folder result at this display index
+        const folderResults = sortedResults.filter(r => r.type === 'folder');
         if (folderResults[index]) {
-            const result = folderResults[index];
-            const color = result.item.color || '#28a745';
-            const whiteText = result.item.whiteText || false;
+            const folder = folderResults[index].item;
+            const color = folder.color || '#28a745';
+            const whiteText = folder.whiteText || false;
             
             const variations = createColorVariations(color, 'folder');
             folderElement.style.setProperty('--folder-bg-color', variations.gradient);
@@ -3259,12 +3346,71 @@ function applySearchResultColors() {
     });
     
     entries.forEach((entryElement, index) => {
-        const entryResults = searchResults.results.filter(r => r.type === 'entry');
+        // Find the entry result at this display index
+        const entryResults = sortedResults.filter(r => r.type === 'entry');
         if (entryResults[index]) {
-            const result = entryResults[index];
-            const color = result.item.color || '#6c757d';
+            const entry = entryResults[index].item;
+            const color = entry.color || '#6c757d';
             const variations = createColorVariations(color, 'entry');
             entryElement.style.setProperty('--entry-border-color', variations.gradient);
+        }
+    });
+}
+
+function applySearchResultColors() {
+    if (!searchResults || !searchResults.results) return;
+    
+    const folders = document.querySelectorAll('.folder.search-result');
+    const entries = document.querySelectorAll('.entry.search-result');
+    
+    const sortedResults = sortSearchResults(searchResults.results, currentSort);
+    
+    // Process folders
+    let folderIndex = 0;
+    folders.forEach((folderElement) => {
+        const folderResults = sortedResults.filter(r => r.type === 'folder');
+        if (folderResults[folderIndex]) {
+            const folder = folderResults[folderIndex].item;
+            const color = folder?.color || '#28a745';
+            const whiteText = folder?.whiteText || false;
+            
+            // Create color variations for folder
+            const variations = createColorVariations(color, 'folder');
+            
+            folderElement.style.setProperty('--folder-bg-color', variations.gradient);
+            folderElement.style.setProperty('--folder-border-color', variations.border);
+            
+            // Apply text colors
+            const folderName = folderElement.querySelector('.folder-name');
+            const folderCount = folderElement.querySelector('.folder-count');
+            const searchResultPath = folderElement.querySelector('.search-result-path');
+            
+            if (whiteText) {
+                folderName.style.color = 'white';
+                folderCount.style.color = '#e0e0e0e0';
+                if (searchResultPath) searchResultPath.style.color = 'white';
+            } else {
+                folderName.style.color = '#333';
+                folderCount.style.color = '#474747ff';
+                if (searchResultPath) searchResultPath.style.color = '#333';
+            }
+            folderIndex++;
+        }
+    });
+    
+    // Process entries
+    let entryIndex = 0;
+    entries.forEach((entryElement) => {
+        const entryResults = sortedResults.filter(r => r.type === 'entry');
+        if (entryResults[entryIndex]) {
+            const entry = entryResults[entryIndex].item;
+            const color = entry?.color || '#6c757d';
+            
+            // Create color variations for entry
+            const variations = createColorVariations(color, 'entry');
+            
+            entryElement.style.setProperty('--entry-border-color', variations.gradient);
+            entryIndex++;
         }
     });
 }
@@ -3303,18 +3449,25 @@ function clearSearch() {
 }
 
 function addSearchToHistory(searchTerm) {
+    // Remove any forward history if we're navigating to a new location
+    if (historyIndex < navigationHistory.length - 1) {
+        navigationHistory = navigationHistory.slice(0, historyIndex + 1);
+    }
+    
     const searchState = {
         type: 'search',
         searchTerm: searchTerm,
         path: [...currentPath]
     };
     
-    if (historyIndex < navigationHistory.length - 1) {
-        navigationHistory = navigationHistory.slice(0, historyIndex + 1);
-    }
-    
     navigationHistory.push(searchState);
     historyIndex = navigationHistory.length - 1;
+    
+    // Limit history size to prevent memory issues
+    if (navigationHistory.length > 50) {
+        navigationHistory = navigationHistory.slice(-50);
+        historyIndex = navigationHistory.length - 1;
+    }
 }
 
 // =-=-=-=-=-=-=
