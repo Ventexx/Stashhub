@@ -1904,7 +1904,7 @@ function saveFolderChanges(modal, folderIdx) {
     // Apply changes
     targetFolder.name = newName;
     targetFolder.color = newColor;
-    targetFolder.cover = newCover;
+    targetFolder.cover = newCover || '';
     targetFolder.aspectRatio = newAspectRatio;
     targetFolder.whiteText = newWhiteText;
     targetFolder.folderTags = tagValidation.tags;
@@ -2015,7 +2015,7 @@ function saveEntryChanges(modal, entryIdx) {
     // Apply changes
     targetEntry.name = newName;
     targetEntry.color = newColor;
-    targetEntry.cover = newCover;
+    targetEntry.cover = newCover || '';
     targetEntry.aspectRatio = newAspectRatio;
     targetEntry.links = newLinks;
     targetEntry.note = newNote;
@@ -3695,17 +3695,20 @@ function showFolderEditModal(folder, folderIdx, onCloseCallback) {
                         <div class="cover-preview" style="margin-top: 10px;">
                             ${folder.cover ? `<div style="font-size: 12px; color: #666; margin-bottom: 5px;">Current cover: ${getDisplayableImageSource(folder.cover)}</div>` : ''}
                         </div>
-                        <div style="margin-top: 10px; display: flex; gap: 10px; align-items: center;">
-                            <button type="button" id="upload-folder-cover-btn" class="btn-secondary">📂 Upload Image</button>
-                            <button type="button" id="paste-folder-cover-btn" class="btn-info">📋 Paste URL</button>
-                            <div class="aspect-ratio-dropdown">
-                                <select id="folder-aspect-ratio-select">
-                                    <option value="3:4" ${(folder.aspectRatio || '8:3') === '3:4' ? 'selected' : ''}>3:4 (Portrait)</option>
-                                    <option value="1:1" ${(folder.aspectRatio || '8:3') === '1:1' ? 'selected' : ''}>1:1 (Square)</option>
-                                    <option value="3:2" ${(folder.aspectRatio || '8:3') === '3:2' ? 'selected' : ''}>3:2 (Photo)</option>
-                                    <option value="8:3" ${(folder.aspectRatio || '8:3') === '8:3' ? 'selected' : ''}>8:3 (Ultrawide)</option>
-                                </select>
+                        <div style="margin-top: 10px; display: flex; justify-content: space-between; align-items: center;">
+                            <div style="display: flex; gap: 10px; align-items: center;">
+                                <button type="button" id="upload-folder-cover-btn" class="btn-with-hover-text" data-hover-text="Upload Image" title="Upload Image">📂</button>
+                                <button type="button" id="paste-folder-cover-btn" class="btn-with-hover-text" data-hover-text="Paste URL" title="Paste URL">📋</button>
+                                <div class="aspect-ratio-dropdown">
+                                    <select id="folder-aspect-ratio-select">
+                                        <option value="3:4" ${(folder.aspectRatio || '8:3') === '3:4' ? 'selected' : ''}>3:4 (Portrait)</option>
+                                        <option value="1:1" ${(folder.aspectRatio || '8:3') === '1:1' ? 'selected' : ''}>1:1 (Square)</option>
+                                        <option value="3:2" ${(folder.aspectRatio || '8:3') === '3:2' ? 'selected' : ''}>3:2 (Photo)</option>
+                                        <option value="8:3" ${(folder.aspectRatio || '8:3') === '8:3' ? 'selected' : ''}>8:3 (Ultrawide)</option>
+                                    </select>
+                                </div>
                             </div>
+                            <button type="button" id="clear-folder-cover-btn">Reset</button>
                         </div>
                     </div>
                 </div>
@@ -3806,6 +3809,9 @@ function showFolderEditModal(folder, folderIdx, onCloseCallback) {
     };
     
     modal.querySelector('#paste-folder-cover-btn').onclick = () => handlePasteUrl('folder-cover');
+    modal.querySelector('#clear-folder-cover-btn').onclick = () => {
+        modal.querySelector('#folder-cover').value = '';
+    };
     
     // Aspect ratio change handler
     modal.querySelector('#folder-aspect-ratio-select').onchange = (e) => {
@@ -3882,17 +3888,20 @@ function showEntryEditModal(entryData, entryIdx, onCloseCallback) {
                         <div class="cover-preview" style="margin-top: 10px;">
                             ${actualEntry.cover ? `<div style="font-size: 12px; color: #666; margin-bottom: 5px;">Current cover: ${getDisplayableImageSource(actualEntry.cover)}</div>` : ''}
                         </div>
-                        <div style="margin-top: 10px; display: flex; gap: 10px; align-items: center;">
-                            <button type="button" id="upload-entry-cover-btn" class="btn-secondary">📂 Upload Image</button>
-                            <button type="button" id="paste-entry-cover-btn" class="btn-info">📋 Paste URL</button>
-                            <div class="aspect-ratio-dropdown">
-                                <select id="entry-aspect-ratio-select">
-                                    <option value="3:4" ${(actualEntry.aspectRatio || '8:3') === '3:4' ? 'selected' : ''}>3:4 (Portrait)</option>
-                                    <option value="1:1" ${(actualEntry.aspectRatio || '8:3') === '1:1' ? 'selected' : ''}>1:1 (Square)</option>
-                                    <option value="3:2" ${(actualEntry.aspectRatio || '8:3') === '3:2' ? 'selected' : ''}>3:2 (Photo)</option>
-                                    <option value="8:3" ${(actualEntry.aspectRatio || '8:3') === '8:3' ? 'selected' : ''}>8:3 (Ultrawide)</option>
-                                </select>
+                        <div style="margin-top: 10px; display: flex; justify-content: space-between; align-items: center;">
+                            <div style="display: flex; gap: 10px; align-items: center;">
+                                <button type="button" id="upload-entry-cover-btn" class="btn-with-hover-text" data-hover-text="Upload Image" title="Upload Image">📂</button>
+                                <button type="button" id="paste-entry-cover-btn" class="btn-with-hover-text" data-hover-text="Paste URL" title="Paste URL">📋</button>
+                                <div class="aspect-ratio-dropdown">
+                                    <select id="entry-aspect-ratio-select">
+                                        <option value="3:4" ${(actualEntry.aspectRatio || '8:3') === '3:4' ? 'selected' : ''}>3:4 (Portrait)</option>
+                                        <option value="1:1" ${(actualEntry.aspectRatio || '8:3') === '1:1' ? 'selected' : ''}>1:1 (Square)</option>
+                                        <option value="3:2" ${(actualEntry.aspectRatio || '8:3') === '3:2' ? 'selected' : ''}>3:2 (Photo)</option>
+                                        <option value="8:3" ${(actualEntry.aspectRatio || '8:3') === '8:3' ? 'selected' : ''}>8:3 (Ultrawide)</option>
+                                    </select>
+                                </div>
                             </div>
+                            <button type="button" id="clear-entry-cover-btn">Reset</button>
                         </div>
                     </div>
                 </div>
@@ -4036,6 +4045,9 @@ function showEntryEditModal(entryData, entryIdx, onCloseCallback) {
     };
     
     modal.querySelector('#paste-entry-cover-btn').onclick = () => handlePasteUrl('entry-cover');
+    modal.querySelector('#clear-entry-cover-btn').onclick = () => {
+        modal.querySelector('#entry-cover').value = '';
+    };
     
     modal.querySelector('#entry-aspect-ratio-select').onchange = (e) => {
         const selectedRatio = e.target.value;
