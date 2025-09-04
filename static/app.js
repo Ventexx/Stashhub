@@ -25,6 +25,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Initialize global settings and load current session
     await loadDataFromServer();
     initializeNavigationHistory();
+    initializeGlobalKeyboardShortcuts();
     
     document.getElementById('new-folder-btn').onclick = showCreateFolderModal;
     document.getElementById('new-entry-btn').onclick = showCreateEntryModal;
@@ -223,6 +224,31 @@ async function initializeGlobalSettings() {
         console.log('Creating default global settings file');
         await createDefaultGlobalSettings();
     }
+}
+
+function initializeGlobalKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        // Only trigger if user is not typing in an input field or modal is open
+        if (e.target.tagName === 'INPUT' || 
+            e.target.tagName === 'TEXTAREA' || 
+            e.target.tagName === 'SELECT' ||
+            document.querySelector('.modal-overlay')) {
+            return;
+        }
+        
+        // "/" key to focus search bar
+        if (e.key === '/') {
+            e.preventDefault();
+            const searchToggleBtn = document.getElementById('search-toggle-btn');
+            const searchInput = document.getElementById('search-input');
+            
+            if (!searchExpanded) {
+                handleSearchToggle();
+            } else {
+                searchInput.focus();
+            }
+        }
+    });
 }
 
 // =-=-=-=-=-=-=-=-=-=-=-=-
@@ -865,7 +891,7 @@ async function renameProfile(profileName) {
                     <input type="text" id="profile-name-input" value="${profile.name}" placeholder="Enter profile name">
                 </div>
                 <div class="modal-actions">
-                    <button id="save-name-btn" type="button" class="btn-primary">Save Name</button>
+                    <button id="save-name-btn" type="button" class="btn-primary">💾 Save Name</button>
                     <button id="cancel-name-btn" type="button" class="btn-secondary">Cancel</button>
                 </div>
             </div>
@@ -1192,6 +1218,7 @@ function createPathBar() {
                 const targetIndex = index - 1;
                 if (targetIndex === -1) {
                     // Navigate to root
+                    clearSearch();
                     navigateToPath([]);
                 } else {
                     // Navigate to specific folder
@@ -1268,7 +1295,7 @@ function createBatchActionsBar() {
             <button id="batch-delete-btn" class="batch-delete-btn" data-tooltip="Delete">🗑️</button>
             <button id="batch-export-btn" class="batch-export-btn" data-tooltip="Export as JSON">📤</button>
             <button id="batch-duplicate-btn" class="batch-duplicate-btn" data-tooltip="Duplicate">📄</button>
-            <button id="batch-open-btn" class="batch-open-btn" data-tooltip="Open">🚀</button>
+            <button id="batch-open-btn" class="batch-open-btn" data-tooltip="Open all Links">🚀</button>
             <button id="batch-move-btn" class="batch-move-btn" data-tooltip="Move">📁</button>
         </div>
         <div class="batch-actions">
@@ -1354,7 +1381,7 @@ function setupMainAreaDragDrop(contentDiv) {
         const imageFiles = files.filter(file => isImageFile(file));
         imageFiles.forEach(async file => {
             const fileName = file.name.replace(/\.[^/.]+$/, "");
-            const newEntryName = `Image: ${fileName}`;
+            const newEntryName = fileName; // Use original filename as-is
     
             // Convert to base64 and save
             const reader = new FileReader();
@@ -1375,7 +1402,7 @@ function setupMainAreaDragDrop(contentDiv) {
             
                     if (response.ok) {
                         const result = await response.json();
-                        createNewEntry(newEntryName, '', [], result.path);
+                        createNewEntry(newEntryName, result.path, []); // Set cover as second parameter
                         showErrorMessage(`Image saved and entry created: "${result.filename}"`, 1);
                     } else {
                         createNewEntry(newEntryName, '', []);
@@ -1689,20 +1716,11 @@ function navigateUp() {
     }
     
     const newPath = currentPath.slice(0, -1);
-    
-    // If we're in search mode, perform search in the parent folder
-    if (isSearchActive && searchResults && searchResults.searchTerm) {
-        addToHistory(newPath);
-        currentPath = newPath;
-        const results = performSearchOperation(searchResults.searchTerm, getCurrentFolder(), [...currentPath]);
-        displaySearchResults(results, searchResults.searchTerm);
-    } else {
-        addToHistory(newPath);
-        currentPath = newPath;
-        clearSelection();
-        clearSearch();
-        render();
-    }
+    addToHistory(newPath);
+    currentPath = newPath;
+    clearSelection();
+    clearSearch();
+    render();
 }
 
 function navigateBack() {
@@ -1714,24 +1732,10 @@ function navigateBack() {
     historyIndex--;
     const historyItem = navigationHistory[historyIndex];
     
-    if (historyItem && historyItem.type === 'search') {
-        currentPath = [...historyItem.path];
-        const searchInput = document.getElementById('search-input');
-        if (searchInput) {
-            searchInput.value = historyItem.searchTerm;
-        }
-        // Clear the search timeout to prevent interference
-        if (searchTimeout) {
-            clearTimeout(searchTimeout);
-            searchTimeout = null;
-        }
-        executeSearch(historyItem.searchTerm);
-    } else {
-        currentPath = [...(historyItem || [])];
-        clearSearch();
-        clearSelection();
-        render();
-    }
+    currentPath = [...(historyItem || [])];
+    clearSearch();
+    clearSelection();
+    render();
 }
 
 function navigateForward() {
@@ -1743,24 +1747,10 @@ function navigateForward() {
     historyIndex++;
     const historyItem = navigationHistory[historyIndex];
     
-    if (historyItem && historyItem.type === 'search') {
-        currentPath = [...historyItem.path];
-        const searchInput = document.getElementById('search-input');
-        if (searchInput) {
-            searchInput.value = historyItem.searchTerm;
-        }
-        // Clear the search timeout to prevent interference
-        if (searchTimeout) {
-            clearTimeout(searchTimeout);
-            searchTimeout = null;
-        }
-        executeSearch(historyItem.searchTerm);
-    } else {
-        currentPath = [...(historyItem || [])];
-        clearSearch();
-        clearSelection();
-        render();
-    }
+    currentPath = [...(historyItem || [])];
+    clearSearch();
+    clearSelection();
+    render();
 }
 
 function navigateToSearchResult(result) {
@@ -2300,7 +2290,7 @@ function handleJsonDrop(jsonFile) {
             } else {
                 // Web environment - we can't get the actual file path
                 // We'll need to save it to a default location and inform the user
-                filePath = `./imported_${Date.now()}_${jsonFile.name}`;
+                filePath = `./Profiles/imported_${Date.now()}_${jsonFile.name}`;
                 showErrorMessage('Cannot access local file path in web browser. File will be saved to profiles directory.', 1);
             }
             
