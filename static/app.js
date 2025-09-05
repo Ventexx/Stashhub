@@ -27,6 +27,13 @@ document.addEventListener('DOMContentLoaded', async function() {
     initializeNavigationHistory();
     initializeGlobalKeyboardShortcuts();
     
+    // Check if we should show welcome modal
+    if (globalSettings.showWelcomeOnStartup) {
+        globalSettings.showWelcomeOnStartup = false;
+        await saveGlobalSettings();
+        setTimeout(() => showWelcomeModal(), 500); // Small delay for smoother experience
+    }
+    
     document.getElementById('new-folder-btn').onclick = showCreateFolderModal;
     document.getElementById('new-entry-btn').onclick = showCreateEntryModal;
 
@@ -205,7 +212,8 @@ async function createDefaultGlobalSettings() {
         activeSession: "profile1",
         profiles: [
             { name: "profile1", value: "./data.json" }
-        ]
+        ],
+        showWelcomeOnStartup: true
     };
     await saveGlobalSettings();
 }
@@ -216,6 +224,12 @@ async function initializeGlobalSettings() {
         if (response.ok) {
             const serverGlobalSettings = await response.json();
             globalSettings = serverGlobalSettings;
+            
+            // Ensure showWelcomeOnStartup exists (for backward compatibility)
+            if (globalSettings.showWelcomeOnStartup === undefined) {
+                globalSettings.showWelcomeOnStartup = false; // Don't show on existing installations
+                await saveGlobalSettings();
+            }
         } else {
             // Create default global settings file
             await createDefaultGlobalSettings();
@@ -4355,14 +4369,11 @@ function showHelpModal() {
     
     modal.querySelector('.close-btn').onclick = () => modal.remove();
     
-    // Welcome button placeholder functionality
     modal.querySelector('#welcome-btn').onclick = () => {
         modal.remove();
-        // Placeholder for future welcome modal
-        showErrorMessage('Welcome functionality coming soon!', 1);
+        showWelcomeModal();
     };
     
-    // Changelog button placeholder functionality
     modal.querySelector('#changelog-btn').onclick = () => {
         modal.remove();
         // Placeholder for future changelog modal
@@ -4386,6 +4397,193 @@ function showHelpModal() {
     });
 
     setupModalEscapeKey(modal);
+}
+
+function showWelcomeModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay welcome-modal';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Welcome to Stashhub</h3>
+                <button class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body welcome-modal-body">
+                <div class="welcome-indicators">
+                    <div class="welcome-indicator active"></div>
+                    <div class="welcome-indicator"></div>
+                    <div class="welcome-indicator"></div>
+                    <div class="welcome-indicator"></div>
+                </div>
+                
+                <div class="welcome-slide active">
+                    <div class="welcome-slide-text">
+                        <h4>Welcome to Your Personal Bookmark Manager!</h4>
+                        <p>This powerful tool helps you organize your bookmarks, links, and notes in a visual and intuitive way. Let's take a quick tour to get you started.</p>
+                    </div>
+                </div>
+                
+                <div class="welcome-slide">
+                    <img src="/static/images/welcome-slide1.png" alt="Welcome Slide 1" class="welcome-slide-image" onerror="this.style.display='none'">
+                    <div class="welcome-slide-text">
+                        <h4>Organize with Folders and Entries</h4>
+                        <p>Create folders to categorize your content and entries to store your bookmarks. Right-click any item to edit it, and drag & drop new links or images to add new content effortlessly.</p>
+                    </div>
+                </div>
+                
+                <div class="welcome-slide">
+                    <img src="/static/images/welcome-slide2.png" alt="Welcome Slide 2" class="welcome-slide-image" onerror="this.style.display='none'">
+                    <div class="welcome-slide-text">
+                        <h4>Customize Your Experience</h4>
+                        <p>Personalize your folders and entries with custom colors, cover images, and aspect ratios. Use the Settings menu to configure default properties and behaviors to match your workflow.</p>
+                    </div>
+                </div>
+                
+                <div class="welcome-slide">
+                    <div class="welcome-slide-text">
+                        <h4>You're All Set!</h4>
+                        <p>That's the basics covered! You can always access the usage guide for detailed instructions or check the changelog for recent updates.</p>
+                        <p><strong>Press ESC to close this welcome message and start using the app.</strong></p>
+                        <div class="welcome-final-actions">
+                            <button class="welcome-action-btn welcome-close-btn">Start Using App</button>
+                            <button class="welcome-action-btn welcome-help-btn">Usage Guide</button>
+                            <button class="welcome-action-btn welcome-changelog-btn">View Changelog</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="welcome-navigation">
+                    <button class="welcome-nav-btn" id="welcome-prev-btn">‹</button>
+                    <button class="welcome-nav-btn" id="welcome-next-btn">›</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    let currentSlide = 0;
+    const slides = modal.querySelectorAll('.welcome-slide');
+    const indicators = modal.querySelectorAll('.welcome-indicator');
+    const prevBtn = modal.querySelector('#welcome-prev-btn');
+    const nextBtn = modal.querySelector('#welcome-next-btn');
+    
+    function updateSlide() {
+        // Hide all slides and deactivate indicators
+        slides.forEach((slide, index) => {
+            slide.classList.toggle('active', index === currentSlide);
+        });
+        indicators.forEach((indicator, index) => {
+            indicator.classList.toggle('active', index === currentSlide);
+        });
+        
+        // Update navigation buttons visibility and state
+        const navigation = modal.querySelector('.welcome-navigation');
+
+        if (currentSlide === 0) {
+            // First slide: only show right arrow
+            prevBtn.style.visibility = 'hidden';
+            nextBtn.style.visibility = 'visible';
+            nextBtn.disabled = false;
+            navigation.style.justifyContent = 'flex-end';
+        } else if (currentSlide === slides.length - 1) {
+            // Last slide: only show left arrow
+            prevBtn.style.visibility = 'visible';
+            prevBtn.disabled = false;
+            nextBtn.style.visibility = 'hidden';
+            navigation.style.justifyContent = 'flex-start';
+        } else {
+            // Middle slides: show both arrows
+            prevBtn.style.visibility = 'visible';
+            nextBtn.style.visibility = 'visible';
+            prevBtn.disabled = false;
+            nextBtn.disabled = false;
+            navigation.style.justifyContent = 'space-between';
+        }
+
+        navigation.style.display = 'flex';
+    }
+    
+    function nextSlide() {
+        if (currentSlide < slides.length - 1) {
+            currentSlide++;
+            updateSlide();
+        }
+    }
+    
+    function prevSlide() {
+        if (currentSlide > 0) {
+            currentSlide--;
+            updateSlide();
+        }
+    }
+    
+    function goToSlide(index) {
+        currentSlide = index;
+        updateSlide();
+    }
+    
+    // Event listeners
+    prevBtn.onclick = prevSlide;
+    nextBtn.onclick = nextSlide;
+    
+    // Indicator clicks
+    indicators.forEach((indicator, index) => {
+        indicator.onclick = () => goToSlide(index);
+    });
+    
+    // Final action buttons
+    modal.querySelector('.welcome-close-btn').onclick = () => modal.remove();
+    modal.querySelector('.welcome-help-btn').onclick = () => {
+        modal.remove();
+        showHelpModal();
+    };
+    modal.querySelector('.welcome-changelog-btn').onclick = () => {
+        modal.remove();
+        showErrorMessage('Changelog functionality coming soon!', 1);
+    };
+    
+    // Keyboard navigation
+    const handleKeydown = (e) => {
+        if (e.key === 'ArrowLeft') {
+            e.preventDefault();
+            prevSlide();
+        } else if (e.key === 'ArrowRight') {
+            e.preventDefault();
+            nextSlide();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            modal.remove();
+            document.removeEventListener('keydown', handleKeydown);
+        }
+    };
+    document.addEventListener('keydown', handleKeydown);
+    
+    // Close functionality
+    modal.querySelector('.close-btn').onclick = () => {
+        modal.remove();
+        document.removeEventListener('keydown', handleKeydown);
+    };
+    
+    let mouseDownOnModal = false;
+    modal.addEventListener('mousedown', (e) => {
+        if (e.target === modal) {
+            mouseDownOnModal = true;
+        } else {
+            mouseDownOnModal = false;
+        }
+    });
+
+    modal.addEventListener('mouseup', (e) => {
+        if (e.target === modal && mouseDownOnModal) {
+            modal.remove();
+            document.removeEventListener('keydown', handleKeydown);
+        }
+        mouseDownOnModal = false;
+    });
+    
+    // Initialize first slide
+    updateSlide();
 }
 
 function showSettingsModal() {
