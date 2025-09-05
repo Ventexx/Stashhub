@@ -4478,30 +4478,29 @@ function showWelcomeModal() {
         });
         
         // Update navigation buttons visibility and state
-        const navigation = modal.querySelector('.welcome-navigation');
-
         if (currentSlide === 0) {
             // First slide: only show right arrow
-            prevBtn.style.visibility = 'hidden';
-            nextBtn.style.visibility = 'visible';
+            prevBtn.style.opacity = '0';
+            prevBtn.style.pointerEvents = 'none';
+            nextBtn.style.opacity = '1';
+            nextBtn.style.pointerEvents = 'all';
             nextBtn.disabled = false;
-            navigation.style.justifyContent = 'flex-end';
         } else if (currentSlide === slides.length - 1) {
             // Last slide: only show left arrow
-            prevBtn.style.visibility = 'visible';
+            prevBtn.style.opacity = '1';
+            prevBtn.style.pointerEvents = 'all';
             prevBtn.disabled = false;
-            nextBtn.style.visibility = 'hidden';
-            navigation.style.justifyContent = 'flex-start';
+            nextBtn.style.opacity = '0';
+            nextBtn.style.pointerEvents = 'none';
         } else {
             // Middle slides: show both arrows
-            prevBtn.style.visibility = 'visible';
-            nextBtn.style.visibility = 'visible';
+            prevBtn.style.opacity = '1';
+            prevBtn.style.pointerEvents = 'all';
             prevBtn.disabled = false;
+            nextBtn.style.opacity = '1';
+            nextBtn.style.pointerEvents = 'all';
             nextBtn.disabled = false;
-            navigation.style.justifyContent = 'space-between';
         }
-
-        navigation.style.display = 'flex';
     }
     
     function nextSlide() {

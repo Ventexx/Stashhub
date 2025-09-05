@@ -1000,7 +1000,10 @@ body.modal-open .modal-overlay { pointer-events: auto; }
     margin-bottom: 20px;
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    transition: transform 0.2s ease;
+    transform-origin: center center;
 }
+.welcome-slide-image:hover { transform: scale(1.18); z-index: 1000; position: relative; }
 .welcome-slide-text { font-size: 16px; line-height: 1.5; color: #333; max-width: 600px; }
 
 .welcome-navigation {
@@ -1024,11 +1027,12 @@ body.modal-open .modal-overlay { pointer-events: auto; }
     border-radius: 50%;
     font-size: 20px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: background-color 0.2s ease, transform 0.2s ease, opacity 0.2s ease;
     pointer-events: all;
     display: flex;
     align-items: center;
     justify-content: center;
+    z-index: 1;
 }
 .welcome-nav-btn:hover { background: #0056b3; transform: scale(1.1); }
 .welcome-nav-btn:disabled { background: #ccc; cursor: not-allowed; transform: none; }
