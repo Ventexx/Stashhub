@@ -1068,6 +1068,70 @@ body.modal-open .modal-overlay { pointer-events: auto; }
 .welcome-changelog-btn { background: #6f42c1; color: white; }
 .welcome-changelog-btn:hover { background: #5a32a3; transform: translateY(-1px); }
 
+/* Changelog Modal */
+.changelog-modal .modal-content { max-width: 800px; width: 90vw; max-height: 80vh; }
+.changelog-modal-body { padding: 20px; max-height: 60vh; overflow-y: auto; }
+
+.changelog-release { margin-bottom: 30px; padding-bottom: 20px; }
+.changelog-release:not(:last-child) { border-bottom: 1px solid #dee2e6; }
+.changelog-release-header { display: flex; align-items: baseline; gap: 15px; margin-bottom: 15px; }
+.changelog-release-title { font-size: 20px; font-weight: 600; color: #333; margin: 0; }
+.changelog-release-date { font-size: 14px; color: #666; font-weight: normal; }
+.changelog-release-body {
+    font-size: 16px;
+    line-height: 1.6;
+    color: #444;
+    white-space: pre-wrap;
+}
+
+.changelog-modal-actions {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+    margin: 30px 20px 20px 20px;
+    padding-top: 20px;
+    border-top: 1px solid #dee2e6;
+}
+
+.changelog-release-btn {
+    background: #ae5abd;
+    color: white;
+    padding: 12px 24px;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.changelog-release-btn:hover { background: #8c4899; transform: translateY(-1px); }
+.changelog-cancel-btn {
+    background: #6c757d;
+    color: white;
+    padding: 12px 24px;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.changelog-cancel-btn:hover { background: #5a6268; transform: translateY(-1px); }
+
+.changelog-loading { text-align: center; padding: 40px; color: #666; font-style: italic; }
+
+.changelog-error {
+    text-align: center;
+    padding: 40px;
+    color: #dc3545;
+    background: #f8f9fa;
+    border-radius: 8px;
+    margin: 20px;
+}
+
+.error-message.persistent { position: relative; }
+.error-message.persistent::after { content: "🔔"; position: absolute; top: 8px; right: 8px; font-size: 12px; }
+
 /* Settings Modal */
 .settings-modal-content { width: auto; min-width: 750px; max-width: 1200px; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden;}
 .settings-modal-body { display: flex; gap: 30px; align-items: flex-start; flex: 1; overflow-y: auto; padding-right: 10px;}

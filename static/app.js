@@ -20,6 +20,7 @@ let isSearchActive = false;
 let searchResults = null;
 let searchHistory = [];
 let searchExpanded = false;
+let changelogData = null;
 
 document.addEventListener('DOMContentLoaded', async function() {
     // Initialize global settings and load current session
@@ -33,6 +34,8 @@ document.addEventListener('DOMContentLoaded', async function() {
         await saveGlobalSettings();
         setTimeout(() => showWelcomeModal(), 500); // Small delay for smoother experience
     }
+
+    fetchChangelogOnStartup();
     
     document.getElementById('new-folder-btn').onclick = showCreateFolderModal;
     document.getElementById('new-entry-btn').onclick = showCreateEntryModal;
@@ -293,6 +296,75 @@ function initializeGlobalKeyboardShortcuts() {
             }
         }
     });
+}
+
+async function fetchChangelogOnStartup() {
+    try {
+        const response = await fetch('/fetch-changelog');
+        if (response.ok) {
+            const result = await response.json();
+            changelogData = result.data;
+            
+            if (result.new_release) {
+                setTimeout(() => {
+                    showSpecialNotification('📢 New version detected! Head to the changelog section to view what the new version has to offer.');
+                }, 2000); // Show after 2 seconds to avoid overwhelming startup
+            }
+        }
+    } catch (error) {
+        console.log('Failed to fetch changelog data:', error);
+    }
+}
+
+async function loadChangelogContent() {
+    const contentDiv = document.getElementById('changelog-content');
+    
+    try {
+        let releases = changelogData;
+        
+        // If no cached data, try to fetch
+        if (!releases) {
+            const response = await fetch('/fetch-changelog');
+            if (response.ok) {
+                const result = await response.json();
+                releases = result.data;
+                changelogData = releases;
+            } else {
+                throw new Error('Failed to fetch changelog');
+            }
+        }
+        
+        if (!releases || releases.length === 0) {
+            contentDiv.innerHTML = '<div class="changelog-error">No changelog data available.</div>';
+            return;
+        }
+        
+        // Generate changelog HTML
+        let changelogHTML = '';
+        releases.forEach((release, index) => {
+            const publishedDate = new Date(release.published_at).toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+            
+            changelogHTML += `
+                <div class="changelog-release">
+                    <div class="changelog-release-header">
+                        <h4 class="changelog-release-title">${release.name || release.tag_name}</h4>
+                        <span class="changelog-release-date">${publishedDate}</span>
+                    </div>
+                    <div class="changelog-release-body">${release.body || 'No release notes available.'}</div>
+                </div>
+            `;
+        });
+        
+        contentDiv.innerHTML = changelogHTML;
+        
+    } catch (error) {
+        console.error('Error loading changelog:', error);
+        contentDiv.innerHTML = '<div class="changelog-error">Failed to load changelog data.</div>';
+    }
 }
 
 // =-=-=-=-=-=-=-=-=-=-=-=-
@@ -4332,14 +4404,14 @@ function showHelpModal() {
                 </div>
                 <div class="help-item search-help-special">
                     <div class="help-icon">🔍</div>
-                    <div>Press / key or search button to perform search</div>
+                    <div>Press '/' key or search button to perform search</div>
                 </div>
                 <div class="search-development-note">
                     Search functionality is under heavy development and some features may not work as intended
                 </div>
                 <div class="help-item">
                     <div class="help-icon">👤</div>
-                    <div>Use profiles to manage different JSON files</div>
+                    <div>Use profiles in Settings to manage different JSON files</div>
                 </div>
                 <div class="help-item">
                     <div class="help-icon">⚙️</div>
@@ -4347,7 +4419,7 @@ function showHelpModal() {
                 </div>
                 <div class="help-item">
                     <div class="help-icon">🔢</div>
-                    <div>Use Alt+1/2/3 to save and switch between paths</div>
+                    <div>Use Alt+1/2/3 to Save and QuickSwitch between paths</div>
                 </div>
                 <div class="help-item">
                     <div class="help-icon">📂</div>
@@ -4359,8 +4431,8 @@ function showHelpModal() {
                 </div>
             </div>
             <div class="help-modal-actions">
-                <button id="welcome-btn" type="button" class="help-action-btn welcome-btn">Welcome</button>
-                <button id="changelog-btn" type="button" class="help-action-btn changelog-btn">Changelog</button>
+                <button id="welcome-btn" type="button" class="help-action-btn welcome-btn">ℹ️ Quick Start</button>
+                <button id="changelog-btn" type="button" class="help-action-btn changelog-btn">📰 Changelog</button>
             </div>
         </div>
     `;
@@ -4376,8 +4448,7 @@ function showHelpModal() {
     
     modal.querySelector('#changelog-btn').onclick = () => {
         modal.remove();
-        // Placeholder for future changelog modal
-        showErrorMessage('Changelog functionality coming soon!', 1);
+        showChangelogModal();
     };
     
     let mouseDownOnModal = false;
@@ -4445,9 +4516,9 @@ function showWelcomeModal() {
                         <p>That's the basics covered! You can always access the usage guide for detailed instructions or check the changelog for recent updates.</p>
                         <p><strong>Press ESC to close this welcome message and start using the app.</strong></p>
                         <div class="welcome-final-actions">
-                            <button class="welcome-action-btn welcome-close-btn">Start Using App</button>
-                            <button class="welcome-action-btn welcome-help-btn">Usage Guide</button>
-                            <button class="welcome-action-btn welcome-changelog-btn">View Changelog</button>
+                            <button class="welcome-action-btn welcome-close-btn">✅ Start Using App</button>
+                            <button class="welcome-action-btn welcome-help-btn">ℹ️ Usage Guide</button>
+                            <button class="welcome-action-btn welcome-changelog-btn">📰 View Changelog</button>
                         </div>
                     </div>
                 </div>
@@ -4539,7 +4610,7 @@ function showWelcomeModal() {
     };
     modal.querySelector('.welcome-changelog-btn').onclick = () => {
         modal.remove();
-        showErrorMessage('Changelog functionality coming soon!', 1);
+        showChangelogModal();
     };
     
     // Keyboard navigation
@@ -4583,6 +4654,56 @@ function showWelcomeModal() {
     
     // Initialize first slide
     updateSlide();
+}
+
+function showChangelogModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay changelog-modal';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Changelog</h3>
+                <button class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body changelog-modal-body" id="changelog-content">
+                <div class="changelog-loading">Loading changelog...</div>
+            </div>
+            <div class="changelog-modal-actions">
+                <button id="changelog-release-btn" type="button" class="changelog-release-btn">📄 Release Page</button>
+                <button id="changelog-cancel-btn" type="button" class="changelog-cancel-btn">Cancel</button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Load changelog content
+    loadChangelogContent();
+    
+    // Event listeners
+    modal.querySelector('.close-btn').onclick = () => modal.remove();
+    modal.querySelector('#changelog-cancel-btn').onclick = () => modal.remove();
+    modal.querySelector('#changelog-release-btn').onclick = () => {
+        window.open('https://github.com/Ventexx/Stashhub/releases', '_blank');
+    };
+    
+    let mouseDownOnModal = false;
+    modal.addEventListener('mousedown', (e) => {
+        if (e.target === modal) {
+            mouseDownOnModal = true;
+        } else {
+            mouseDownOnModal = false;
+        }
+    });
+
+    modal.addEventListener('mouseup', (e) => {
+        if (e.target === modal && mouseDownOnModal) {
+            modal.remove();
+        }
+        mouseDownOnModal = false;
+    });
+    
+    setupModalEscapeKey(modal);
 }
 
 function showSettingsModal() {
@@ -5382,6 +5503,38 @@ function isValidPath(path) {
     } catch (error) {
         return false;
     }
+}
+
+function showSpecialNotification(text) {
+    initNotificationContainer();
+    
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'error-message info persistent';
+    
+    errorDiv.innerHTML = `
+        <div class="error-message-icon">🔔</div>
+        <div class="error-message-text">${text}</div>
+    `;
+    
+    notificationContainer.appendChild(errorDiv);
+    
+    setTimeout(() => {
+        errorDiv.classList.add('show');
+    }, 100);
+    
+    // Remove excess notifications from top (but keep this special one)
+    const existingMessages = notificationContainer.querySelectorAll('.error-message:not(.persistent)');
+    if (existingMessages.length > MAX_NOTIFICATIONS - 1) {
+        const toRemove = existingMessages.length - (MAX_NOTIFICATIONS - 1);
+        for (let i = 0; i < toRemove; i++) {
+            removeErrorMessage(existingMessages[i]);
+        }
+    }
+    
+    // Only remove on click (no auto-remove)
+    errorDiv.addEventListener('click', () => {
+        removeErrorMessage(errorDiv);
+    });
 }
 
 function showErrorMessage(text, level = 1) {
