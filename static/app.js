@@ -227,6 +227,8 @@ async function initializeGlobalSettings() {
 }
 
 function initializeGlobalKeyboardShortcuts() {
+    let lastSlotKeyPress = { slot: null, timestamp: 0 };
+    
     document.addEventListener('keydown', (e) => {
         // Only trigger if user is not typing in an input field or modal is open
         if (e.target.tagName === 'INPUT' || 
@@ -248,6 +250,34 @@ function initializeGlobalKeyboardShortcuts() {
                 searchInput.focus();
             }
         }
+        
+        // Path slot shortcuts
+        if (e.key >= '1' && e.key <= '3' && e.altKey && !e.shiftKey && !e.ctrlKey) {
+            e.preventDefault();
+            const slotNumber = parseInt(e.key);
+            const currentTime = Date.now();
+            
+            // Check if this is a double-press within 1 second
+            if (lastSlotKeyPress.slot === slotNumber && 
+                currentTime - lastSlotKeyPress.timestamp < 1000) {
+                // Double-press detected - save current path
+                savePathToSlot(slotNumber);
+                lastSlotKeyPress = { slot: null, timestamp: 0 }; // Reset
+            } else {
+                // Single press - try to load path, or record for potential double-press
+                const savedPath = data.settings?.pathSlots?.[slotNumber];
+                
+                if (savedPath && Array.isArray(savedPath)) {
+                    // Slot has a path - load it
+                    loadPathFromSlot(slotNumber);
+                    lastSlotKeyPress = { slot: null, timestamp: 0 }; // Reset
+                } else {
+                    // Slot is empty - record this press for potential double-press
+                    lastSlotKeyPress = { slot: slotNumber, timestamp: currentTime };
+                    showErrorMessage(`Slot ${slotNumber} is empty. Press Alt+${slotNumber} again within 1 second to save current path`, 1);
+                }
+            }
+        }
     });
 }
 
@@ -265,7 +295,21 @@ function initializeSettings() {
             linksExpandedByDefault: true,
             noteExpandedByDefault: true,
             tagsExpandedByDefault: false,
-            entryClickAction: 'openLinks' // 'openLinks' or 'copyNote'
+            entryClickAction: 'openLinks', // 'openLinks' or 'copyNote'
+            pathSlots: {
+                1: null,
+                2: null,
+                3: null
+            }
+        };
+    }
+    
+    // Initialize pathSlots if it doesn't exist (for existing profiles)
+    if (!data.settings.pathSlots) {
+        data.settings.pathSlots = {
+            1: null,
+            2: null,
+            3: null
         };
     }
 }
@@ -1792,6 +1836,52 @@ function addToHistory(newPath) {
         navigationHistory = navigationHistory.slice(-50);
         historyIndex = navigationHistory.length - 1;
     }
+}
+
+function savePathToSlot(slotNumber) {
+    initializeSettings(); // Ensure settings are initialized
+    
+    // Check if slot already has a path
+    const existingPath = data.settings.pathSlots[slotNumber];
+    const isOverwriting = existingPath && Array.isArray(existingPath);
+    
+    // Save current path to the specified slot
+    data.settings.pathSlots[slotNumber] = [...currentPath];
+    
+    // Auto-save the changes
+    autoSave();
+    
+    // Show confirmation message
+    const pathDisplay = getPathDisplayString(currentPath);
+    const action = isOverwriting ? 'overwritten' : 'saved';
+    showErrorMessage(`Path ${action} in slot ${slotNumber}: ${pathDisplay}`, 1);
+}
+
+function loadPathFromSlot(slotNumber) {
+    initializeSettings(); // Ensure settings are initialized
+    
+    // Check if slot has a saved path
+    const savedPath = data.settings.pathSlots[slotNumber];
+    
+    if (!savedPath || !Array.isArray(savedPath)) {
+        return false; // Slot is empty
+    }
+    
+    // Validate that the saved path still exists
+    if (!isValidPath(savedPath)) {
+        // Path no longer exists, clear the slot
+        data.settings.pathSlots[slotNumber] = null;
+        autoSave();
+        showErrorMessage(`Path in slot ${slotNumber} no longer exists and has been cleared`, 2);
+        return false;
+    }
+    
+    // Navigate to the saved path
+    const pathDisplay = getPathDisplayString(savedPath);
+    navigateToPath(savedPath);
+    
+    showErrorMessage(`Switched to path from slot ${slotNumber}: ${pathDisplay}`, 1);
+    return true;
 }
 
 // =-=-=-=-=-=-=-=
@@ -5025,6 +5115,27 @@ function validateTagInput(tagInput) {
     }
     
     return { valid: true, tags: tags };
+}
+
+function isValidPath(path) {
+    if (!Array.isArray(path)) return false;
+    
+    // Check if path exists by traversing the folder structure
+    let currentFolder = data;
+    
+    try {
+        for (let folderIndex of path) {
+            if (!currentFolder.folders || 
+                folderIndex < 0 || 
+                folderIndex >= currentFolder.folders.length) {
+                return false;
+            }
+            currentFolder = currentFolder.folders[folderIndex];
+        }
+        return true;
+    } catch (error) {
+        return false;
+    }
 }
 
 function showErrorMessage(text, level = 1) {
