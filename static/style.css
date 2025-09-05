@@ -927,9 +927,44 @@ body.modal-open .modal-overlay { pointer-events: auto; }
 .folder-option.disabled { color: #6c757d; cursor: not-allowed; opacity: 0.6; }
 
 /* Help Modal */
-.help-modal .modal-content { max-width: 400px; }
+.help-modal .modal-content { max-width: 600px; width: 90vw; }
 .help-item { display: flex; align-items: center; gap: 12px; padding: 10px; border-radius: 4px; margin-bottom: 8px; background: #f8f9fa; }
 .help-icon { font-size: 20px; width: 30px; text-align: center; }
+
+.search-help-special { border: 2px solid #ffd700 !important; background: #fffdf0 !important; }
+
+.search-development-note {
+    font-size: 12px;
+    color: #666;
+    font-style: italic;
+    margin: -4px 0 12px 42px;
+    padding-left: 12px;
+}
+
+.help-modal-actions {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+    margin: 20px 20px 20px 20px;
+    padding-top: 20px;
+    border-top: 1px solid #dee2e6;
+}
+
+.help-action-btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 100px;
+}
+
+.welcome-btn { background: #24b7b2; color: white; }
+.welcome-btn:hover { background: #1a8683; transform: translateY(-1px); }
+.changelog-btn { background: #ae5abd; color: white; }
+.changelog-btn:hover { background: #8c4899; transform: translateY(-1px); }
 
 /* Settings Modal */
 .settings-modal-content { width: auto; min-width: 750px; max-width: 1200px; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden;}

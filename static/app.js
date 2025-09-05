@@ -2446,7 +2446,7 @@ function toggleSelectionMode() {
         btn.textContent = '✗ Cancel';
         btn.classList.add('active');
     } else {
-        btn.textContent = '✓ Select';
+        btn.textContent = '✓ Select Mode';
         btn.classList.remove('active');
         clearSelection();
     }
@@ -4298,11 +4298,15 @@ function showHelpModal() {
                 </div>
                 <div class="help-item">
                     <div class="help-icon">🖱️</div>
-                    <div>Right click a Folder/Entry to Edit</div>
+                    <div>Right click a Folder/Entry to edit</div>
                 </div>
                 <div class="help-item">
                     <div class="help-icon">📁</div>
                     <div>Left click a folder to open it</div>
+                </div>
+                <div class="help-item">
+                    <div class="help-icon">⚙️</div>
+                    <div>Configure left click entry action in Settings</div>
                 </div>
                 <div class="help-item">
                     <div class="help-icon">🖱️</div>
@@ -4310,8 +4314,39 @@ function showHelpModal() {
                 </div>
                 <div class="help-item">
                     <div class="help-icon">📋</div>
-                    <div>Use Select mode for batch operations</div>
+                    <div>Use Selection mode for batch operations</div>
                 </div>
+                <div class="help-item search-help-special">
+                    <div class="help-icon">🔍</div>
+                    <div>Press / key or search button to perform search</div>
+                </div>
+                <div class="search-development-note">
+                    Search functionality is under heavy development and some features may not work as intended
+                </div>
+                <div class="help-item">
+                    <div class="help-icon">👤</div>
+                    <div>Use profiles to manage different JSON files</div>
+                </div>
+                <div class="help-item">
+                    <div class="help-icon">⚙️</div>
+                    <div>Set default properties for new items in Settings</div>
+                </div>
+                <div class="help-item">
+                    <div class="help-icon">🔢</div>
+                    <div>Use Alt+1/2/3 to save and switch between paths</div>
+                </div>
+                <div class="help-item">
+                    <div class="help-icon">📂</div>
+                    <div>Drag images onto folders/entries to set covers</div>
+                </div>
+                <div class="help-item">
+                    <div class="help-icon">🔗</div>
+                    <div>Drag URLs onto entries to add links</div>
+                </div>
+            </div>
+            <div class="help-modal-actions">
+                <button id="welcome-btn" type="button" class="help-action-btn welcome-btn">Welcome</button>
+                <button id="changelog-btn" type="button" class="help-action-btn changelog-btn">Changelog</button>
             </div>
         </div>
     `;
@@ -4319,6 +4354,21 @@ function showHelpModal() {
     document.body.appendChild(modal);
     
     modal.querySelector('.close-btn').onclick = () => modal.remove();
+    
+    // Welcome button placeholder functionality
+    modal.querySelector('#welcome-btn').onclick = () => {
+        modal.remove();
+        // Placeholder for future welcome modal
+        showErrorMessage('Welcome functionality coming soon!', 1);
+    };
+    
+    // Changelog button placeholder functionality
+    modal.querySelector('#changelog-btn').onclick = () => {
+        modal.remove();
+        // Placeholder for future changelog modal
+        showErrorMessage('Changelog functionality coming soon!', 1);
+    };
+    
     let mouseDownOnModal = false;
     modal.addEventListener('mousedown', (e) => {
         if (e.target === modal) {
@@ -4335,7 +4385,6 @@ function showHelpModal() {
         mouseDownOnModal = false;
     });
 
-    
     setupModalEscapeKey(modal);
 }
 
