@@ -1601,14 +1601,16 @@ function setupFolderDragDrop(folderDiv, folderIdx) {
         }
         // Handle regular links - create new entry in folder
         else if (urls.length > 0) {
-            urls.forEach(url => {
-                if (url.trim() && !isImageUrl(url)) {
-                    createEntryInFolder(folderIdx, url);
+            urls.forEach(urlString => {
+                if (urlString.trim() && !isImageUrl(urlString)) {
+                    const extractedUrls = extractMultipleUrls(urlString);
+                    extractedUrls.forEach(url => createEntryInFolder(folderIdx, url));
                 }
             });
         }
         else if (textData && isUrl(textData) && !isImageUrl(textData)) {
-            createEntryInFolder(folderIdx, textData);
+            const extractedUrls = extractMultipleUrls(textData);
+            extractedUrls.forEach(url => createEntryInFolder(folderIdx, url));
         }
 
         // Prevent folder navigation after drop
@@ -1734,12 +1736,29 @@ function setupEntryDragDrop(entryDiv, entryIdx) {
             // Add regular URLs as links
             regularUrls.forEach(url => addLinkToEntry(entryIdx, url));
         }
+        // Handle URLs
+        else if (urls.length > 0) {
+            // Check for image URLs first and block them
+            const imageUrls = urls.filter(url => isImageUrl(url));
+            const regularUrls = urls.filter(url => !isImageUrl(url));
+
+            if (imageUrls.length > 0) {
+                showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
+            }
+
+            // Add regular URLs as links - handle multiple URLs in single string
+            regularUrls.forEach(urlString => {
+                const extractedUrls = extractMultipleUrls(urlString);
+                extractedUrls.forEach(url => addLinkToEntry(entryIdx, url));
+            });
+        }
         // Handle single URL from text
         else if (textData && isUrl(textData)) {
             if (isImageUrl(textData)) {
                 showErrorMessage('Web image URLs are not supported. Please download the image and drag the file instead.', 2);
             } else {
-                addLinkToEntry(entryIdx, textData);
+                const extractedUrls = extractMultipleUrls(textData);
+                extractedUrls.forEach(url => addLinkToEntry(entryIdx, url));
             }
         }
         
@@ -1951,13 +1970,23 @@ function saveFolderChanges(modal, folderIdx) {
     const originalTags = targetFolder.folderTags || [];
     
     // Get new values from form
-    const newName = modal.querySelector('#folder-name').value.trim();
-    const newColor = modal.querySelector('#folder-color-hex').value.trim();
+    let newName = modal.querySelector('#folder-name').value.trim();
+    let newColor = modal.querySelector('#folder-color-hex').value.trim();
     const newCover = modal.querySelector('#folder-cover').value.trim();
     const newAspectRatio = modal.querySelector('#folder-aspect-ratio-select').value.trim();
     const whiteTextBtn = modal.querySelector('#white-text-btn');
     const newWhiteText = whiteTextBtn ? whiteTextBtn.classList.contains('active') : false;
     const newTagsInput = modal.querySelector('#folder-tags').value.trim();
+
+    // Auto-fix hex color if needed
+    if (newColor && !newColor.startsWith('#')) {
+        // Try to add # prefix if it looks like a valid hex
+        if (/^[0-9A-Fa-f]{6}$/.test(newColor)) {
+            newColor = '#' + newColor;
+            modal.querySelector('#folder-color-hex').value = newColor;
+            modal.querySelector('#folder-color').value = newColor;
+        }
+    }
     
     // Validation
     if (!newName) {
@@ -2035,12 +2064,22 @@ function saveEntryChanges(modal, entryIdx) {
     const originalTags = targetEntry.entryTags || [];
     
     // Get new values from form
-    const newName = modal.querySelector('#entry-name').value.trim();
-    const newColor = modal.querySelector('#entry-color-hex').value.trim();
+    let newName = modal.querySelector('#entry-name').value.trim();
+    let newColor = modal.querySelector('#entry-color-hex').value.trim();
     const newCover = modal.querySelector('#entry-cover').value.trim();
     const newAspectRatio = modal.querySelector('#entry-aspect-ratio-select').value.trim();
     const newNote = modal.querySelector('#entry-note').value.trim();
     const newTagsInput = modal.querySelector('#entry-tags').value.trim();
+
+    // Auto-fix hex color if needed
+    if (newColor && !newColor.startsWith('#')) {
+        // Try to add # prefix if it looks like a valid hex
+        if (/^[0-9A-Fa-f]{6}$/.test(newColor)) {
+            newColor = '#' + newColor;
+            modal.querySelector('#entry-color-hex').value = newColor;
+            modal.querySelector('#entry-color').value = newColor;
+        }
+    }
     
     // Collect and validate links
     const linkInputs = modal.querySelectorAll('.link-input');
@@ -2131,6 +2170,33 @@ function saveEntryChanges(modal, entryIdx) {
     } else {
         showErrorMessage('No changes detected', 1);
     }
+}
+
+function extractMultipleUrls(textData) {
+    if (!textData || !textData.trim()) return [];
+    
+    // First try to split by line breaks
+    let urls = textData.split(/\r?\n/).map(url => url.trim()).filter(url => url);
+    
+    // If we only got one result, try to extract multiple URLs from a single string
+    if (urls.length === 1) {
+        const singleString = urls[0];
+        // Look for multiple http/https patterns
+        const httpMatches = singleString.match(/(https?:\/\/[^\s]+)/g);
+        if (httpMatches && httpMatches.length > 1) {
+            urls = httpMatches;
+        }
+    }
+    
+    // Validate each URL and filter out invalid ones
+    return urls.filter(url => {
+        try {
+            new URL(url);
+            return url.startsWith('http://') || url.startsWith('https://');
+        } catch {
+            return false;
+        }
+    });
 }
 
 function deleteFolderWithConfirmation(folderIdx, onClose) {
