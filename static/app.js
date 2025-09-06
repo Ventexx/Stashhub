@@ -301,75 +301,6 @@ function initializeGlobalKeyboardShortcuts() {
     });
 }
 
-async function fetchChangelogOnStartup() {
-    try {
-        const response = await fetch('/fetch-changelog');
-        if (response.ok) {
-            const result = await response.json();
-            changelogData = result.data;
-            
-            if (result.new_release) {
-                setTimeout(() => {
-                    showSpecialNotification('📢 New version detected! Head to the changelog section to view what the new version has to offer.');
-                }, 2000); // Show after 2 seconds to avoid overwhelming startup
-            }
-        }
-    } catch (error) {
-        console.log('Failed to fetch changelog data:', error);
-    }
-}
-
-async function loadChangelogContent() {
-    const contentDiv = document.getElementById('changelog-content');
-    
-    try {
-        let releases = changelogData;
-        
-        // If no cached data, try to fetch
-        if (!releases) {
-            const response = await fetch('/fetch-changelog');
-            if (response.ok) {
-                const result = await response.json();
-                releases = result.data;
-                changelogData = releases;
-            } else {
-                throw new Error('Failed to fetch changelog');
-            }
-        }
-        
-        if (!releases || releases.length === 0) {
-            contentDiv.innerHTML = '<div class="changelog-error">No changelog data available.</div>';
-            return;
-        }
-        
-        // Generate changelog HTML
-        let changelogHTML = '';
-        releases.forEach((release, index) => {
-            const publishedDate = new Date(release.published_at).toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-            });
-            
-            changelogHTML += `
-                <div class="changelog-release">
-                    <div class="changelog-release-header">
-                        <h4 class="changelog-release-title">${release.name || release.tag_name}</h4>
-                        <span class="changelog-release-date">${publishedDate}</span>
-                    </div>
-                    <div class="changelog-release-body">${release.body || 'No release notes available.'}</div>
-                </div>
-            `;
-        });
-        
-        contentDiv.innerHTML = changelogHTML;
-        
-    } catch (error) {
-        console.error('Error loading changelog:', error);
-        contentDiv.innerHTML = '<div class="changelog-error">Failed to load changelog data.</div>';
-    }
-}
-
 // =-=-=-=-=-=-=-=-=-=-=-=-
 // SETTINGS & CONFIGURATION
 // =-=-=-=-=-=-=-=-=-=-=-=-
@@ -5391,6 +5322,261 @@ function isImageSourceAccessible(imageSource) {
     return false;
 }
 
+// =-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// CHANGELOG & CHANGELOG CONTROL
+// =-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+async function fetchChangelogOnStartup() {
+    try {
+        const response = await fetch('/fetch-changelog');
+        if (response.ok) {
+            const result = await response.json();
+            changelogData = result.data;
+            
+            // Only show notification if current version is outdated
+            if (result.new_release && isNewerVersionAvailable()) {
+                setTimeout(() => {
+                    showSpecialNotification('📢 New version detected! Head to the changelog section to view what the new version has to offer.');
+                }, 2000); // Show after 2 seconds to avoid overwhelming startup
+            }
+        }
+    } catch (error) {
+        console.log('Failed to fetch changelog data:', error);
+    }
+}
+
+async function loadChangelogContent() {
+    const contentDiv = document.getElementById('changelog-content');
+    
+    try {
+        let releases = changelogData;
+        
+        // If no cached data, try to fetch
+        if (!releases) {
+            const response = await fetch('/fetch-changelog');
+            if (response.ok) {
+                const result = await response.json();
+                releases = result.data;
+                changelogData = releases;
+            } else {
+                throw new Error('Failed to fetch changelog');
+            }
+        }
+        
+        if (!releases || releases.length === 0) {
+            contentDiv.innerHTML = '<div class="changelog-error">No changelog data available.</div>';
+            return;
+        }
+        
+        // Generate changelog HTML
+        let changelogHTML = '';
+        releases.forEach((release, index) => {
+            const publishedDate = new Date(release.published_at).toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+            
+            // Convert markdown body to HTML
+            const markdownBody = convertMarkdownToHTML(release.body || 'No release notes available.');
+            
+            changelogHTML += `
+                <div class="changelog-release">
+                    <div class="changelog-release-header">
+                        <h3 class="changelog-release-title">${release.name || release.tag_name}</h3>
+                        <span class="changelog-release-date">${publishedDate}</span>
+                    </div>
+                    <div class="changelog-release-body">${markdownBody}</div>
+                </div>
+            `;
+        });
+        
+        contentDiv.innerHTML = changelogHTML;
+        
+    } catch (error) {
+        console.error('Error loading changelog:', error);
+        contentDiv.innerHTML = '<div class="changelog-error">Failed to load changelog data.</div>';
+    }
+}
+
+function convertMarkdownToHTML(markdown) {
+    // Basic markdown to HTML conversion
+    let html = markdown;
+    
+    // Handle code blocks first to protect them
+    const codeBlocks = [];
+    html = html.replace(/```[\s\S]*?```/gim, (match, offset) => {
+        const placeholder = `__CODEBLOCK_${codeBlocks.length}__`;
+        codeBlocks.push(match.replace(/```/g, '').trim());
+        return placeholder;
+    });
+    
+    // Inline code
+    html = html.replace(/`(.*?)`/gim, '<code>$1</code>');
+    
+    // Headers
+    html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+    html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+    html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+    
+    // Bold
+    html = html.replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>');
+    
+    // Italic (but not for bullet points)
+    html = html.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/gim, '<em>$1</em>');
+    
+    // Split into sections by double line breaks
+    html = html.replace(/\r\n/g, '\n');
+    const sections = html.split(/\n\s*\n/);
+    
+    html = sections.map(section => {
+        const lines = section.split('\n').map(line => line.trim()).filter(line => line !== '');
+        
+        if (lines.length === 0) return '';
+        
+        // Check if this section contains bullet points
+        const bulletLines = lines.filter(line => /^[*-] /.test(line));
+        
+        if (bulletLines.length > 0 && bulletLines.length === lines.length) {
+            // This section is entirely bullet points
+            const listItems = bulletLines.map(line => {
+                let content = line.replace(/^[*-] /, '');
+                // Process links within bullet point content
+                content = content.replace(/\[([^\]]+)\]\(([^)]+)\)/gim, '<a href="$2" target="_blank">$1</a>');
+                content = content.replace(/(https?:\/\/[^\s<)]+)/gim, '<a href="$1" target="_blank">$1</a>');
+                return `<li>${content}</li>`;
+            });
+            return `<ul>${listItems.join('')}</ul>`;
+        } else if (bulletLines.length > 0) {
+            // This section has mixed content - process line by line
+            let result = '';
+            let inList = false;
+            let listItems = [];
+            
+            for (let line of lines) {
+                if (/^[*-] /.test(line)) {
+                    if (!inList) {
+                        inList = true;
+                        listItems = [];
+                    }
+                    let content = line.replace(/^[*-] /, '');
+                    // Process links within bullet point content
+                    content = content.replace(/\[([^\]]+)\]\(([^)]+)\)/gim, '<a href="$2" target="_blank">$1</a>');
+                    content = content.replace(/(https?:\/\/[^\s<)]+)/gim, '<a href="$1" target="_blank">$1</a>');
+                    listItems.push(`<li>${content}</li>`);
+                } else {
+                    if (inList) {
+                        result += `<ul>${listItems.join('')}</ul>`;
+                        inList = false;
+                        listItems = [];
+                    }
+                    
+                    // Process links for non-bullet lines
+                    line = line.replace(/\[([^\]]+)\]\(([^)]+)\)/gim, '<a href="$2" target="_blank">$1</a>');
+                    line = line.replace(/(https?:\/\/[^\s<)]+)/gim, '<a href="$1" target="_blank">$1</a>');
+                    
+                    // Check if it's a header
+                    if (line.includes('<h1>') || line.includes('<h2>') || line.includes('<h3>')) {
+                        result += line;
+                    } else {
+                        result += `<p>${line}</p>`;
+                    }
+                }
+            }
+            
+            // Close any remaining list
+            if (inList) {
+                result += `<ul>${listItems.join('')}</ul>`;
+            }
+            
+            return result;
+        } else {
+            // No bullet points in this section - process links for regular content
+            if (lines.length === 1) {
+                let line = lines[0];
+                line = line.replace(/\[([^\]]+)\]\(([^)]+)\)/gim, '<a href="$2" target="_blank">$1</a>');
+                line = line.replace(/(https?:\/\/[^\s<)]+)/gim, '<a href="$1" target="_blank">$1</a>');
+                
+                // Check if it's already a header
+                if (line.includes('<h1>') || line.includes('<h2>') || line.includes('<h3>')) {
+                    return line;
+                } else {
+                    return `<p>${line}</p>`;
+                }
+            } else {
+                const processedLines = lines.map(line => {
+                    line = line.replace(/\[([^\]]+)\]\(([^)]+)\)/gim, '<a href="$2" target="_blank">$1</a>');
+                    line = line.replace(/(https?:\/\/[^\s<)]+)/gim, '<a href="$1" target="_blank">$1</a>');
+                    return line;
+                });
+                return `<p>${processedLines.join('<br>')}</p>`;
+            }
+        }
+    }).filter(section => section !== '').join('');
+    
+    // Restore code blocks
+    codeBlocks.forEach((code, index) => {
+        html = html.replace(`__CODEBLOCK_${index}__`, `<pre><code>${code}</code></pre>`);
+    });
+    
+    // Clean up empty paragraphs
+    html = html.replace(/<p>\s*<\/p>/g, '');
+    
+    return html;
+}
+
+function parseVersion(versionString) {
+    const match = versionString.match(/V(\d+)\.(\d+)/i);
+    if (match) {
+        return {
+            major: parseInt(match[1]),
+            minor: parseInt(match[2])
+        };
+    }
+    return null;
+}
+
+function compareVersions(version1, version2) {
+    const v1 = parseVersion(version1);
+    const v2 = parseVersion(version2);
+    
+    if (!v1 || !v2) return 0;
+    
+    if (v1.major > v2.major) return 1;
+    if (v1.major < v2.major) return -1;
+    if (v1.minor > v2.minor) return 1;
+    if (v1.minor < v2.minor) return -1;
+    return 0;
+}
+
+function getLatestVersion(releases) {
+    if (!releases || releases.length === 0) return null;
+    
+    let latestVersion = null;
+    let latestVersionString = null;
+    
+    for (const release of releases) {
+        const versionMatch = release.name ? release.name.match(/V\d+\.\d+/i) : null;
+        if (versionMatch) {
+            const versionString = versionMatch[0];
+            if (!latestVersionString || compareVersions(versionString, latestVersionString) > 0) {
+                latestVersion = release;
+                latestVersionString = versionString;
+            }
+        }
+    }
+    
+    return { release: latestVersion, version: latestVersionString };
+}
+
+function isNewerVersionAvailable() {
+    if (!changelogData || changelogData.length === 0) return false;
+    
+    const latest = getLatestVersion(changelogData);
+    if (!latest || !latest.version) return false;
+    
+    return compareVersions(latest.version, APP_VERSION) > 0;
+}
+
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=
 // VALIDATION & ERROR HANDLING
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -5515,59 +5701,6 @@ function isValidPath(path) {
     } catch (error) {
         return false;
     }
-}
-
-function parseVersion(versionString) {
-    const match = versionString.match(/V(\d+)\.(\d+)/i);
-    if (match) {
-        return {
-            major: parseInt(match[1]),
-            minor: parseInt(match[2])
-        };
-    }
-    return null;
-}
-
-function compareVersions(version1, version2) {
-    const v1 = parseVersion(version1);
-    const v2 = parseVersion(version2);
-    
-    if (!v1 || !v2) return 0;
-    
-    if (v1.major > v2.major) return 1;
-    if (v1.major < v2.major) return -1;
-    if (v1.minor > v2.minor) return 1;
-    if (v1.minor < v2.minor) return -1;
-    return 0;
-}
-
-function getLatestVersion(releases) {
-    if (!releases || releases.length === 0) return null;
-    
-    let latestVersion = null;
-    let latestVersionString = null;
-    
-    for (const release of releases) {
-        const versionMatch = release.name ? release.name.match(/V\d+\.\d+/i) : null;
-        if (versionMatch) {
-            const versionString = versionMatch[0];
-            if (!latestVersionString || compareVersions(versionString, latestVersionString) > 0) {
-                latestVersion = release;
-                latestVersionString = versionString;
-            }
-        }
-    }
-    
-    return { release: latestVersion, version: latestVersionString };
-}
-
-function isNewerVersionAvailable() {
-    if (!changelogData || changelogData.length === 0) return false;
-    
-    const latest = getLatestVersion(changelogData);
-    if (!latest || !latest.version) return false;
-    
-    return compareVersions(latest.version, APP_VERSION) > 0;
 }
 
 function showSpecialNotification(text) {
