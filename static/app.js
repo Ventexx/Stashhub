@@ -22,6 +22,9 @@ let searchHistory = [];
 let searchExpanded = false;
 let changelogData = null;
 
+const APP_VERSION = "V1.1";
+
+
 document.addEventListener('DOMContentLoaded', async function() {
     // Initialize global settings and load current session
     await loadDataFromServer();
@@ -4657,6 +4660,10 @@ function showWelcomeModal() {
 }
 
 function showChangelogModal() {
+    const isUpdateAvailable = isNewerVersionAvailable();
+    const versionStatusClass = isUpdateAvailable ? 'version-outdated' : 'version-current';
+    const versionTooltip = isUpdateAvailable ? 'Newer version available' : 'Up to date';
+    
     const modal = document.createElement('div');
     modal.className = 'modal-overlay changelog-modal';
     modal.innerHTML = `
@@ -4669,8 +4676,13 @@ function showChangelogModal() {
                 <div class="changelog-loading">Loading changelog...</div>
             </div>
             <div class="changelog-modal-actions">
-                <button id="changelog-release-btn" type="button" class="changelog-release-btn">📄 Release Page</button>
-                <button id="changelog-cancel-btn" type="button" class="changelog-cancel-btn">Cancel</button>
+                <div class="version-status">
+                    <span class="current-version ${versionStatusClass}" title="${versionTooltip}">Current Version: ${APP_VERSION}</span>
+                </div>
+                <div class="changelog-buttons">
+                    <button id="changelog-release-btn" type="button" class="changelog-release-btn">📄 Release Page</button>
+                    <button id="changelog-cancel-btn" type="button" class="changelog-cancel-btn">Cancel</button>
+                </div>
             </div>
         </div>
     `;
@@ -5503,6 +5515,59 @@ function isValidPath(path) {
     } catch (error) {
         return false;
     }
+}
+
+function parseVersion(versionString) {
+    const match = versionString.match(/V(\d+)\.(\d+)/i);
+    if (match) {
+        return {
+            major: parseInt(match[1]),
+            minor: parseInt(match[2])
+        };
+    }
+    return null;
+}
+
+function compareVersions(version1, version2) {
+    const v1 = parseVersion(version1);
+    const v2 = parseVersion(version2);
+    
+    if (!v1 || !v2) return 0;
+    
+    if (v1.major > v2.major) return 1;
+    if (v1.major < v2.major) return -1;
+    if (v1.minor > v2.minor) return 1;
+    if (v1.minor < v2.minor) return -1;
+    return 0;
+}
+
+function getLatestVersion(releases) {
+    if (!releases || releases.length === 0) return null;
+    
+    let latestVersion = null;
+    let latestVersionString = null;
+    
+    for (const release of releases) {
+        const versionMatch = release.name ? release.name.match(/V\d+\.\d+/i) : null;
+        if (versionMatch) {
+            const versionString = versionMatch[0];
+            if (!latestVersionString || compareVersions(versionString, latestVersionString) > 0) {
+                latestVersion = release;
+                latestVersionString = versionString;
+            }
+        }
+    }
+    
+    return { release: latestVersion, version: latestVersionString };
+}
+
+function isNewerVersionAvailable() {
+    if (!changelogData || changelogData.length === 0) return false;
+    
+    const latest = getLatestVersion(changelogData);
+    if (!latest || !latest.version) return false;
+    
+    return compareVersions(latest.version, APP_VERSION) > 0;
 }
 
 function showSpecialNotification(text) {

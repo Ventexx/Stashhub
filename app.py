@@ -241,6 +241,91 @@ def fetch_changelog():
         if response.status_code == 200:
             releases_data = response.json()
             
+            # Filter to only necessary fields
+            filtered_releases = []
+            for release in releases_data:
+                filtered_release = {
+                    "url": release.get("url"),
+                    "assets_url": release.get("assets_url"),
+                    "html_url": release.get("html_url"),
+                    "id": release.get("id"),
+                    "author": {
+                        "login": release.get("author", {}).get("login"),
+                        "html_url": release.get("author", {}).get("html_url"),
+                        "repos_url": release.get("author", {}).get("repos_url")
+                    },
+                    "tag_name": release.get("tag_name"),
+                    "name": release.get("name"),
+                    "prerelease": release.get("prerelease"),
+                    "created_at": release.get("created_at"),
+                    "updated_at": release.get("updated_at"),
+                    "published_at": release.get("published_at"),
+                    "assets": release.get("assets"),
+                    "body": release.get("body")
+                }
+                filtered_releases.append(filtered_release)
+            
+            # Check for new releases
+            new_release_detected = False
+            if filtered_releases and existing_data:
+                latest_release_date = filtered_releases[0].get('published_at')
+                if latest_release_date != last_published_date:
+                    new_release_detected = True
+            elif filtered_releases and not existing_data:
+                new_release_detected = True
+            
+            # Save the new filtered data
+            with open(changelog_file, 'w', encoding='utf-8') as f:
+                json.dump(filtered_releases, f, ensure_ascii=False, indent=2)
+            
+            return jsonify({
+                "status": "success",
+                "data": filtered_releases,
+                "new_release": new_release_detected
+            })
+        else:
+            # Return existing data if API call fails
+            return jsonify({
+                "status": "success",
+                "data": existing_data,
+                "new_release": False
+            })
+            
+    except Exception as e:
+        # Return existing data if error occurs
+        try:
+            if os.path.exists('./changelog.json'):
+                with open('./changelog.json', 'r', encoding='utf-8') as f:
+                    existing_data = json.load(f)
+                return jsonify({
+                    "status": "success", 
+                    "data": existing_data,
+                    "new_release": False
+                })
+        except:
+            pass
+        return jsonify({"error": str(e)}), 500
+    try:
+        # GitHub API URL for releases
+        api_url = "https://api.github.com/repos/Ventexx/Stashhub/releases"
+        
+        # Load existing changelog data if it exists
+        changelog_file = './changelog.json'
+        existing_data = []
+        last_published_date = None
+        
+        if os.path.exists(changelog_file):
+            with open(changelog_file, 'r', encoding='utf-8') as f:
+                existing_data = json.load(f)
+                if existing_data:
+                    # Get the most recent release date
+                    last_published_date = existing_data[0].get('published_at')
+        
+        # Fetch from GitHub API
+        response = requests.get(api_url)
+        if response.status_code == 200:
+            releases_data = response.json()
+            
             # Check for new releases
             new_release_detected = False
             if releases_data and existing_data:
