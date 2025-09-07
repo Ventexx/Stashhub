@@ -58,6 +58,22 @@ http://127.0.0.1:8780/
 
 Note: the app does not automatically navigate your browser. You must manually open the URL above.
 
+### Update
+To update the app, use the provided update script:
+
+```bash
+# Linux / macOS
+chmod +x ./update.sh
+./update.sh
+```
+
+```bash
+# Windows
+update.bat
+```
+
+Note: The update script is still under development and may not fully handle all scenarios yet. Manual updates by pulling the latest repository changes remain the safest method.
+
 ### Uninstall
 To completely remove the app, delete the repository folder. No files are stored outside of it.
 
