@@ -219,7 +219,8 @@ async function createDefaultGlobalSettings() {
         profiles: [
             { name: "profile1", value: "./data.json" }
         ],
-        showWelcomeOnStartup: true
+        showWelcomeOnStartup: true,
+        appVersion: APP_VERSION
     };
     await saveGlobalSettings();
 }
@@ -231,9 +232,22 @@ async function initializeGlobalSettings() {
             const serverGlobalSettings = await response.json();
             globalSettings = serverGlobalSettings;
             
+            // Check and update app version
+            if (!globalSettings.appVersion || globalSettings.appVersion !== APP_VERSION) {
+                const oldVersion = globalSettings.appVersion || "Unknown";
+                globalSettings.appVersion = APP_VERSION;
+                await saveGlobalSettings();
+                
+                // Optionally show a notification about version update
+                if (oldVersion !== "Unknown") {
+                    console.log(`App updated from ${oldVersion} to ${APP_VERSION}`);
+                    // You could show a notification here if desired
+                }
+            }
+            
             // Ensure showWelcomeOnStartup exists (for backward compatibility)
             if (globalSettings.showWelcomeOnStartup === undefined) {
-                globalSettings.showWelcomeOnStartup = false; // Don't show on existing installations
+                globalSettings.showWelcomeOnStartup = false;
                 await saveGlobalSettings();
             }
         } else {
