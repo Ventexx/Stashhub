@@ -316,6 +316,7 @@ function initializeSettings() {
             noteExpandedByDefault: true,
             tagsExpandedByDefault: false,
             entryClickAction: 'openLinks', // 'openLinks' or 'copyNote'
+            coverExpandedByDefault: false,
             pathSlots: {
                 1: null,
                 2: null,
@@ -331,6 +332,11 @@ function initializeSettings() {
             2: null,
             3: null
         };
+    }
+    
+    // Initialize coverExpandedByDefault if it doesn't exist (for existing profiles)
+    if (data.settings.coverExpandedByDefault === undefined) {
+        data.settings.coverExpandedByDefault = false;
     }
 }
 
@@ -3945,7 +3951,7 @@ function showFolderEditModal(folder, folderIdx, onCloseCallback) {
     document.body.appendChild(modal);
     
     // Setup expandable sections
-    setupExpandableSection('cover-header', 'cover-arrow', 'cover-section', false);
+    setupExpandableSection('cover-header', 'cover-arrow', 'cover-section', true);
     setupExpandableSection('tags-header', 'tags-arrow', 'tags-section', true);
     
     // Auto-resize textarea
@@ -4170,7 +4176,7 @@ function showEntryEditModal(entryData, entryIdx, onCloseCallback) {
     const linksContainer = modal.querySelector('#links-container');
     renderLinksFromJSON(actualEntry.links || [], linksContainer);
     
-    setupExpandableSection('cover-header', 'cover-arrow', 'cover-section', false);
+    setupExpandableSection('cover-header', 'cover-arrow', 'cover-section', true);
     setupExpandableSection('links-header', 'links-arrow', 'links-section');
     setupExpandableSection('note-header', 'note-arrow', 'note-section');
     setupExpandableSection('tags-header', 'tags-arrow', 'tags-section', true);
@@ -4837,32 +4843,9 @@ function showSettingsModal() {
                         <h4>Edit Menu Behavior</h4>
                         
                         <div class="settings-form-group">
-                            <label class="settings-label">Links section expanded by default:</label>
+                            <label class="settings-label">Sections expanded by default:</label>
                             <div class="settings-control">
-                                <label class="toggle-switch">
-                                    <input type="checkbox" id="links-expanded-default" ${data.settings.linksExpandedByDefault ? 'checked' : ''}>
-                                    <span class="toggle-slider"></span>
-                                </label>
-                            </div>
-                        </div>
-                        
-                        <div class="settings-form-group">
-                            <label class="settings-label">Note section expanded by default:</label>
-                            <div class="settings-control">
-                                <label class="toggle-switch">
-                                    <input type="checkbox" id="note-expanded-default" ${data.settings.noteExpandedByDefault ? 'checked' : ''}>
-                                    <span class="toggle-slider"></span>
-                                </label>
-                            </div>
-                        </div>
-
-                        <div class="settings-form-group">
-                            <label class="settings-label">Tags section expanded by default:</label>
-                            <div class="settings-control">
-                                <label class="toggle-switch">
-                                    <input type="checkbox" id="tags-expanded-default" ${data.settings.tagsExpandedByDefault ? 'checked' : ''}>
-                                    <span class="toggle-slider"></span>
-                                </label>
+                                <button type="button" id="sections-expanded-btn" class="btn-secondary">Configure...</button>
                             </div>
                         </div>
                         
@@ -4947,6 +4930,9 @@ function showSettingsModal() {
         defaultEntryColorPicker.value = defaultColor;
         defaultEntryHexInput.value = defaultColor;
     };
+
+    // Add event listener for sections expanded button
+    modal.querySelector('#sections-expanded-btn').onclick = () => showSectionsExpandedModal();
     
     let mouseDownOnModal = false;
     modal.addEventListener('mousedown', (e) => {
@@ -4970,14 +4956,111 @@ function showSettingsModal() {
         data.settings.defaultEntryAspectRatio = modal.querySelector('#default-entry-aspect-ratio').value;
         data.settings.defaultEntryColor = modal.querySelector('#default-entry-color-hex').value;
         data.settings.defaultFolderWhiteText = modal.querySelector('#default-folder-white-text').checked;
-        data.settings.linksExpandedByDefault = modal.querySelector('#links-expanded-default').checked;
-        data.settings.noteExpandedByDefault = modal.querySelector('#note-expanded-default').checked;
-        data.settings.tagsExpandedByDefault = modal.querySelector('#tags-expanded-default').checked;
         data.settings.entryClickAction = modal.querySelector('#entry-click-action').value;
         
         autoSave();
         modal.remove();
         showErrorMessage('Settings saved successfully!', 1);
+    };
+    
+    setupModalEscapeKey(modal);
+}
+
+function showSectionsExpandedModal() {
+    initializeSettings();
+    
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay sections-expanded-modal';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Default Section Behavior</h3>
+                <button class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: 15px; color: #666; font-size: 13px; text-align: center;">
+                    Choose which sections expand by default when editing items
+                </div>
+                
+                <div class="settings-form-group">
+                    <label class="settings-label">🖼️ Cover Image</label>
+                    <div class="settings-control">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="cover-expanded-default" ${data.settings.coverExpandedByDefault ? 'checked' : ''}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="settings-form-group">
+                    <label class="settings-label">🔗 Links</label>
+                    <div class="settings-control">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="links-expanded-default" ${data.settings.linksExpandedByDefault ? 'checked' : ''}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="settings-form-group">
+                    <label class="settings-label">📝 Notes</label>
+                    <div class="settings-control">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="notes-expanded-default" ${data.settings.noteExpandedByDefault ? 'checked' : ''}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="settings-form-group">
+                    <label class="settings-label">🏷️ Tags</label>
+                    <div class="settings-control">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="tags-expanded-default" ${data.settings.tagsExpandedByDefault ? 'checked' : ''}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="modal-actions" style="margin-top: 20px;">
+                    <button id="save-sections-btn" type="button" class="btn-primary">💾 Save</button>
+                    <button id="cancel-sections-btn" type="button" class="btn-secondary">Cancel</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Event listeners
+    modal.querySelector('.close-btn').onclick = () => modal.remove();
+    modal.querySelector('#cancel-sections-btn').onclick = () => modal.remove();
+    
+    let mouseDownOnModal = false;
+    modal.addEventListener('mousedown', (e) => {
+        if (e.target === modal) {
+            mouseDownOnModal = true;
+        } else {
+            mouseDownOnModal = false;
+        }
+    });
+
+    modal.addEventListener('mouseup', (e) => {
+        if (e.target === modal && mouseDownOnModal) {
+            modal.remove();
+        }
+        mouseDownOnModal = false;
+    });
+    
+    modal.querySelector('#save-sections-btn').onclick = () => {
+        data.settings.coverExpandedByDefault = modal.querySelector('#cover-expanded-default').checked;
+        data.settings.linksExpandedByDefault = modal.querySelector('#links-expanded-default').checked;
+        data.settings.noteExpandedByDefault = modal.querySelector('#notes-expanded-default').checked;
+        data.settings.tagsExpandedByDefault = modal.querySelector('#tags-expanded-default').checked;
+        
+        autoSave();
+        modal.remove();
+        showErrorMessage('Section settings saved successfully!', 1);
     };
     
     setupModalEscapeKey(modal);
@@ -5206,6 +5289,11 @@ function setupExpandableSection(headerId, arrowId, sectionId, useSettings = true
     const arrow = document.getElementById(arrowId);
     const section = document.getElementById(sectionId);
     
+    if (!header || !arrow || !section) {
+        console.log(`Missing elements: ${headerId}, ${arrowId}, ${sectionId}`);
+        return;
+    }
+    
     header.onclick = () => {
         const isExpanded = section.classList.contains('expanded');
         
@@ -5218,29 +5306,33 @@ function setupExpandableSection(headerId, arrowId, sectionId, useSettings = true
         }
     };
     
-    // Use settings to determine default state only if useSettings is true
+    // Determine default state
+    let shouldExpand = false;
+    
     if (useSettings) {
         initializeSettings();
-        let sectionType;
-        if (sectionId === 'links-section') {
-            sectionType = 'linksExpandedByDefault';
-        } else if (sectionId === 'note-section') {
-            sectionType = 'noteExpandedByDefault';
-        } else if (sectionId === 'tags-section') {
-            sectionType = 'tagsExpandedByDefault';
-        }
-
-        const shouldExpand = data.settings[sectionType];
         
-        if (shouldExpand) {
-            section.classList.add('expanded');
-            arrow.textContent = '▾';
-        } else {
-            section.classList.remove('expanded');
-            arrow.textContent = '▸';
+        // Map section IDs to settings
+        const sectionSettingsMap = {
+            'cover-section': 'coverExpandedByDefault',
+            'links-section': 'linksExpandedByDefault', 
+            'note-section': 'noteExpandedByDefault',
+            'tags-section': 'tagsExpandedByDefault'
+        };
+        
+        const settingKey = sectionSettingsMap[sectionId];
+        if (settingKey && data.settings && data.settings[settingKey]) {
+            shouldExpand = true;
         }
+        
+        console.log(`Section ${sectionId}: setting=${settingKey}, value=${data.settings[settingKey]}, shouldExpand=${shouldExpand}`);
+    }
+    
+    // Apply the default state
+    if (shouldExpand) {
+        section.classList.add('expanded');
+        arrow.textContent = '▾';
     } else {
-        // For cover and tags sections, default to collapsed
         section.classList.remove('expanded');
         arrow.textContent = '▸';
     }

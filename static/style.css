@@ -1227,6 +1227,18 @@ body.modal-open .modal-overlay { pointer-events: auto; }
 .settings-section select:focus { outline: none; border-color: #007bff; box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25); }
 .settings-control select:hover { background: #f4f4f4 !important; }
 
+.btn-secondary {
+    background: #6c757d;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+.btn-secondary:hover { background: #5a6268; }
+
 .aspect-ratio-dropdown select {
     background: #6f42c1 !important;
     color: white !important;
@@ -1289,6 +1301,19 @@ body.modal-open .modal-overlay { pointer-events: auto; }
 .toggle-switch input:checked + .toggle-slider { background-color: #007bff; }
 .toggle-switch input:checked + .toggle-slider:before { transform: translateX(24px); }
 .toggle-switch input:focus + .toggle-slider { box-shadow: 0 0 1px #007bff; }
+
+/* Sections Expanded Modal */
+.sections-expanded-modal .modal-content { max-width: 350px; }
+.sections-expanded-modal .settings-form-group {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+.sections-expanded-modal .settings-form-group:last-child { border-bottom: none; }
+.sections-expanded-modal .settings-label { font-weight: 500; color: #333; flex: 1; font-size: 14px;}
+.sections-expanded-modal .modal-body { padding: 15px 20px; }
 
 /* Profile Management */
 .profile-management-section {
